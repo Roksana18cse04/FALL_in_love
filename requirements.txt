@@ -1,3 +1,14 @@
+python-dotenv
+weaviate-client
+pdfplumber
+
+fastapi
+uvicorn
+cloudinary
+requests
+
+PyMuPDF
+
 pandas
 plotly
 numpy
