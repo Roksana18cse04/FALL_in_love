@@ -4,7 +4,8 @@ pdfplumber
 
 fastapi
 uvicorn
-cloudinary
+dropbox
 requests
 
 PyMuPDF
+python-multipart

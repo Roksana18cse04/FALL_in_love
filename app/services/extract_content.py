@@ -1,12 +1,24 @@
 import pdfplumber
+import io
 
-def extract_content_from_pdf(pdf_path):
-    with pdfplumber.open(pdf_path) as pdf:
+async def extract_content_from_pdf(file):
+    try:
+        contents = await file.read()
+        await file.seek(0)
+
+        pdf_bytes = io.BytesIO(contents)
         text = ""
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
 
-        # title generation logic
-        title = pdf_path.split("/")[-1].replace(".pdf", "")
-        
-    return text.strip(), title
+        with pdfplumber.open(pdf_bytes) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+
+        title = file.filename.replace(".pdf", "") if file.filename else "Unknown Document"
+        return text.strip(), title
+
+    except Exception as e:
+        print(f"Error extracting PDF content: {str(e)}")
+        title = file.filename.replace(".pdf", "") if file.filename else "Unknown Document"
+        return "", title

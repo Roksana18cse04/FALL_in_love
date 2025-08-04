@@ -1,20 +1,30 @@
 from datetime import datetime, timezone
 from app.services.weaviate_client import client
 from app.services.extract_content import extract_content_from_pdf
-from app.services.upload_cloudinary import upload_pdf_to_cloudinary
+from app.services.upload_to_dropbox import upload_pdf_to_dropbox
+from fastapi.responses import JSONResponse
+
 
 class_name = "PolicyDocuments" 
 
-def insert_to_weaviate(pdf_path, category="aged care"):
+async def weaviate_insertion(file, category="aged care"):
     
     try:
         # for source: upload file to cloudinary
-        cloud_url = upload_pdf_to_cloudinary(pdf_path)
+        res = await upload_pdf_to_dropbox(file, category)
+        if res['status_code']==409:
+            return JSONResponse(res)
+        
+        elif res.get('status_code') != 200:
+            return JSONResponse(status_code=500, content={
+                "status": "error",
+                "message": res.get("message", "Unknown error during upload.")
+            })
 
+        print("dropbox response------------", res)
+        
         # Extract content from PDF
-        data, title = extract_content_from_pdf(pdf_path)
-        # call summary generation function
-        summary = data[:50] 
+        data, title = await extract_content_from_pdf(file)
 
         # Ensure the client is connected
         if not client.is_connected():
@@ -22,28 +32,28 @@ def insert_to_weaviate(pdf_path, category="aged care"):
 
         data_object = {
             "title": title,
-            "summary": summary,
+            "summary": "",
             "category": category,
             "data": data,
-            "source": cloud_url,
+            "source": res['link'],
             "created_at": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
             "last_updated": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         }
 
         client.collections.get(class_name).data.insert(data_object)
         print(f"Data inserted into class '{class_name}' successfully.")
+        return JSONResponse(status_code=201, content={
+            "status": "success",
+            "message": f"Document '{title}' inserted successfully.",
+            "weaviate_class": class_name,
+            "dropbox_link": res['link']
+        })
         
         
     except Exception as e:
-        print(f"An error occurred while inserting data: {e}")
-
-    client.close()  # Ensure the client connection is closed after the operation
-
-from app.config import BASE_DIR
-
-if __name__ == "__main__":
-    pdf_path = f"{BASE_DIR}\provider-registration-policy.pdf"  # Replace with your PDF file path
-    print(f"Inserting data from {pdf_path} into Weaviate...")
-
-    insert_to_weaviate(pdf_path)
-    print("Data insertion script executed.")
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "message": str(e)
+        })
+    finally:
+        client.close()
