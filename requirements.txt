@@ -9,3 +9,8 @@ requests
 
 PyMuPDF
 python-multipart
+
+pandas
+plotly
+numpy
+matplotlib
