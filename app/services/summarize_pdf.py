@@ -6,9 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
-
-from services.extract_content import extract_content_from_pdf
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+from app.services.extract_content import extract_content_from_pdf
 
 class RealFile:
     def __init__(self, filepath):
@@ -197,3 +196,6 @@ async def main():
             
     except Exception as e:
         print(f"Error: {e}")
+
+if __name__ == "__main__":
+    asyncio.run(main()) 
