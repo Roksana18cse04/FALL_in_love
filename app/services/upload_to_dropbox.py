@@ -1,9 +1,18 @@
 import dropbox
-from app.config import DROPBOX_API_KEY
+from app.config import DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN
+import requests
+
+
+
 
 async def upload_pdf_to_dropbox(file, category):
+    
+    dbx = dropbox.Dropbox(
+        app_key=DROPBOX_APP_KEY,
+        app_secret=DROPBOX_APP_SECRET,
+        oauth2_refresh_token=DROPBOX_REFRESH_TOKEN
+    )
 
-    dbx = dropbox.Dropbox(DROPBOX_API_KEY)
     dropbox_path = f"/app/{category}/{file.filename}"
 
     try:

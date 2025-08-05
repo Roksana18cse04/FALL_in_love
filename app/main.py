@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from weaviate import Client
 from datetime import datetime
 from app.routes import router
 
