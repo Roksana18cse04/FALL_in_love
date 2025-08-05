@@ -2,9 +2,6 @@ import dropbox
 from app.config import DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN
 import requests
 
-
-
-
 async def upload_pdf_to_dropbox(file, category):
     
     dbx = dropbox.Dropbox(
@@ -38,3 +35,12 @@ async def upload_pdf_to_dropbox(file, category):
             "uploaded_to": dropbox_path,
             "link": shared_link
         }
+
+async def delete_file(dropbox_path):
+    dbx = dropbox.Dropbox(
+        app_key=DROPBOX_APP_KEY,
+        app_secret=DROPBOX_APP_SECRET,
+        oauth2_refresh_token=DROPBOX_REFRESH_TOKEN
+    )
+    dbx.files_delete_v2(dropbox_path)
+    print(f"remove file successfully from {dropbox_path}")

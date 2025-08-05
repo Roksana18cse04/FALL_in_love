@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from app.services.weaviate_client import client
 from app.services.extract_content import extract_content_from_pdf
-from app.services.upload_to_dropbox import upload_pdf_to_dropbox
+from app.services.dropbox_operation import upload_pdf_to_dropbox, delete_file
 from fastapi.responses import JSONResponse
 
 
@@ -25,6 +25,10 @@ async def weaviate_insertion(file, category="aged care"):
         
         # Extract content from PDF
         data, title = await extract_content_from_pdf(file)
+        if data=="":
+            # remove file from dropbox
+            await delete_file(res['uploaded_to'])
+            return "Error extracting PDF content"
 
         # Ensure the client is connected
         if not client.is_connected():
