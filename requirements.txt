@@ -1,6 +1,7 @@
 python-dotenv
 weaviate-client
 pdfplumber
+openai
 
 fastapi
 uvicorn
