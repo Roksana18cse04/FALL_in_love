@@ -1,8 +1,20 @@
 from fastapi import APIRouter, UploadFile, File, Query
+from typing import Optional
 from app.services.insert_to_weaviate import weaviate_insertion
 from app.services.weaviate_queries import *
+from pydantic import BaseModel
+from app.services.bot import ask_doc_bot
 
 router = APIRouter()
+
+
+# Define a request model for structured input
+class ChatRequest(BaseModel):
+    question: str
+
+@router.post("/chatbot")
+async def chatbot_endpoint(request: ChatRequest):
+    return await ask_doc_bot(request.question)
 
 @router.post("/insert")
 async def policy_insert(category: str, file: UploadFile = File(...)):
@@ -22,12 +34,12 @@ async def list_all_documents(
 # 7. Hybrid search
 @router.get("/search/hybrid")
 async def hybrid_document_search(
-    q: str = Query("Search query"),
+    q: Optional[str] = Query(default=None),
     category: str = Query("All Categories"),
     alpha: float = Query(0.5, ge=0.0, le=1.0),
     limit: int = Query(5, ge=1, le=50)
 ):
-    print("categories=====", category)
+    print("queries--------", q)
     if q and category != "All Categories":
         # Search within specific category
         print("hybrid search with category-----------")
@@ -37,8 +49,14 @@ async def hybrid_document_search(
         # Search across all categories
         print("hybrid search for all categories----------------")
         return await hybrid_search(q, limit, alpha)
+    
+    elif not q and category == "All Categories":
+        print("get all documents for all categories------")
+        return await get_all_documents(limit)
 
     elif not q and category != "All":
         # No query, just filter by category
         print("search by category--------------")
         return await search_by_category(category, limit)
+    
+

@@ -1,10 +1,11 @@
 from app.services.weaviate_client import client
 from weaviate.classes.query import MetadataQuery, Filter
 from fastapi.responses import JSONResponse
+from collections import OrderedDict
 
 class_name = "PolicyDocuments"
 
-# 1. Semantic Search - Text similarity based search
+#  Semantic Search - Text similarity based search
 async def semantic_search(query_text: str, limit: int = 5):
     """Search documents based on semantic similarity"""
     try:
@@ -22,7 +23,7 @@ async def semantic_search(query_text: str, limit: int = 5):
         results = []
         for obj in response.objects:
             results.append({
-                "id": str(obj.uuid),
+                #"id": str(obj.uuid),
                 "title": obj.properties.get("title"),
                 "summary": obj.properties.get("summary"),
                 "category": obj.properties.get("category"),
@@ -45,45 +46,7 @@ async def semantic_search(query_text: str, limit: int = 5):
             "message": str(e)
         })
 
-# 2. Filter by category
-async def search_by_category(category: str, limit: int = 10):
-    """Search documents by specific category"""
-    try:
-        if not client.is_connected():
-            client.connect()
-        
-        collection = client.collections.get(class_name)
-        
-        response = collection.query.fetch_objects(
-            where=Filter.by_property("category").equal(category),
-            limit=limit
-        )
-        
-        results = []
-        for obj in response.objects:
-            results.append({
-                "id": str(obj.uuid),
-                "title": obj.properties.get("title"),
-                "summary": obj.properties.get("summary"),
-                "category": obj.properties.get("category"),
-                "source": obj.properties.get("source"),
-                "created_at": obj.properties.get("created_at")
-            })
-        
-        return JSONResponse(status_code=200, content={
-            "status": "success",
-            "category": category,
-            "total_results": len(results),
-            "results": results
-        })
-        
-    except Exception as e:
-        return JSONResponse(status_code=500, content={
-            "status": "error",
-            "message": str(e)
-        })
-
-# 4. Get all documents (paginated)
+#  Get all documents (paginated)
 async def get_all_documents(limit: int = 20, offset: int = 0):
     """Get all documents with pagination"""
     try:
@@ -97,10 +60,19 @@ async def get_all_documents(limit: int = 20, offset: int = 0):
             offset=offset
         )
         
-        results = []
+        unique_map = OrderedDict()
         for obj in response.objects:
+            title = obj.properties.get("title")
+            if title not in unique_map:
+                unique_map[title] = obj  # only keep first chunk per title
+
+        # Convert to list and apply pagination manually
+        unique_list = list(unique_map.values())
+        paginated = unique_list[offset:offset + limit]
+
+        results = []
+        for obj in paginated:
             results.append({
-                "id": str(obj.uuid),
                 "title": obj.properties.get("title"),
                 "summary": obj.properties.get("summary"),
                 "category": obj.properties.get("category"),
@@ -124,8 +96,8 @@ async def get_all_documents(limit: int = 20, offset: int = 0):
         })
 
 
-# 7. Hybrid search (combines semantic and keyword search)
-async def hybrid_search(query_text: str, limit: int = 5, alpha: float = 0.5):
+# Hybrid search (combines semantic and keyword search)
+async def hybrid_search(query_text: str, limit: int = 5, alpha: float = 0.5, offset: int = 0):
     """Hybrid search combining semantic and keyword search"""
     try:
         if not client.is_connected():
@@ -139,11 +111,21 @@ async def hybrid_search(query_text: str, limit: int = 5, alpha: float = 0.5):
             limit=limit,
             return_metadata=MetadataQuery(score=True)
         )
-        
-        results = []
+
+        unique_map = OrderedDict()
         for obj in response.objects:
+            title = obj.properties.get("title")
+            if title not in unique_map:
+                unique_map[title] = obj  # only keep first chunk per title
+
+        # Convert to list and apply pagination manually
+        unique_list = list(unique_map.values())
+        paginated = unique_list[offset:offset + limit]
+
+        results = []
+        for obj in paginated:
             results.append({
-                "id": str(obj.uuid),
+                #"id": str(obj.uuid),
                 "title": obj.properties.get("title"),
                 "summary": obj.properties.get("summary"),
                 "category": obj.properties.get("category"),
@@ -166,7 +148,7 @@ async def hybrid_search(query_text: str, limit: int = 5, alpha: float = 0.5):
             "message": str(e)
         })
     
-async def hybrid_search_with_category(query_text: str, category: str, limit: int = 5, alpha: float = 0.7):
+async def hybrid_search_with_category(query_text: str, category: str, limit: int = 5, alpha: float = 0.7, offset: int = 0):
     try:
         if not client.is_connected():
             client.connect()
@@ -176,27 +158,75 @@ async def hybrid_search_with_category(query_text: str, category: str, limit: int
         response = collection.query.hybrid(
             query=query_text,
             alpha=alpha,
-            limit=limit,
-            where=Filter.by_property("category").equal(category),
+            limit=100,  # Increase limit to allow room for filtering
             return_metadata=MetadataQuery(score=True)
         )
-        
+
+       # Filter manually by category
+        filtered = [obj for obj in response.objects if obj.properties.get("category") == category]
+
+        # Ensure unique titles only
+        unique_map = OrderedDict()
+        for obj in filtered:
+            title = obj.properties.get("title")
+            if title not in unique_map:
+                unique_map[title] = obj
+
+        # Convert to list and paginate
+        unique_list = list(unique_map.values())
+        paginated = unique_list[offset:offset + limit]
+
         results = []
-        for obj in response.objects:
+        for obj in paginated:
             results.append({
-                "id": str(obj.uuid),
                 "title": obj.properties.get("title"),
                 "summary": obj.properties.get("summary"),
                 "category": obj.properties.get("category"),
                 "source": obj.properties.get("source"),
                 "score": obj.metadata.score
             })
-        
+
         return JSONResponse(status_code=200, content={
             "status": "success",
             "query": query_text,
             "category": category,
             "search_type": "hybrid_filtered",
+            "results": results
+        })
+        
+    except Exception as e:
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "message": str(e)
+        })
+
+import json
+#  Filter by category
+async def search_by_category(category: str, limit: int = 10, offset: int = 0):
+    """Search documents by specific category"""
+    try:
+        response = await get_all_documents(limit=limit)
+        data = json.loads(response.body.decode())
+        print("result----------", data['results'])
+        # Filter manually by category
+        filtered = [obj for obj in data['results'] if obj.get("category") == category]
+
+        results = []
+        for obj in filtered:
+            results.append({
+                "title": obj.get("title"),
+                "summary": obj.get("summary"),
+                "category": obj.get("category"),
+                "source": obj.get("source"),
+                "created_at": obj.get("created_at"),
+                "last_updated": obj.get("last_updated") 
+
+            })
+        
+        return JSONResponse(status_code=200, content={
+            "status": "success",
+            "category": category,
+            "total_results": len(results),
             "results": results
         })
         

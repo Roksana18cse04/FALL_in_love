@@ -80,7 +80,7 @@ if __name__ == "__main__":
     create_schema()
     print("Schema creation script executed.")
 
-    # delete the schema if needed then create_schema function will be commented
+    # # delete the schema if needed then create_schema function will be commented
     # if not client.is_connected():
     #     client.connect()
     #     client.collections.delete("PolicyDocuments")

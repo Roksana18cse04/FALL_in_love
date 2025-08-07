@@ -168,7 +168,7 @@ async def summarize_with_gpt4(text, title):
         return None
 
 async def main():
-    pdf_path = "app/data/privacy-policy.pdf"
+    pdf_path = "app/data/provider-registration-policy.pdf"
     
     if not os.path.exists(pdf_path):
         print(f"Error: PDF file not found at {pdf_path}")
