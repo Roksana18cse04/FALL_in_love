@@ -9,13 +9,12 @@ from openai import OpenAI
 chat_history = []
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
-class_name = "PolicyDocuments"
 
-def build_context_from_weaviate_results(query_text, limit=5, alpha=0.5):
+def build_context_from_weaviate_results(query_text, organization, limit=3, alpha=0.5):
     if not client.is_connected():
         client.connect()
 
-    collection = client.collections.get(class_name)
+    collection = client.collections.get(organization)
 
     response = collection.query.hybrid(
         query=query_text,
@@ -36,7 +35,11 @@ def build_context_from_weaviate_results(query_text, limit=5, alpha=0.5):
         # score = obj.score
 
         # Format all properties as key: value pairs for context
-        props_text = "\n".join(f"{key}: {value}" for key, value in props.items())
+        excluded_props = {"summary"}
+        props_text = "\n".join(
+            f"{key}: {value}" 
+            for key, value in props.items() if key not in excluded_props
+        )
         print("properties-----------", props)
 
         chunk = (
@@ -46,17 +49,18 @@ def build_context_from_weaviate_results(query_text, limit=5, alpha=0.5):
             "-----"
         )
         context_chunks.append(chunk)
-        print("context chunk----------", context_chunks)
+        print("context chunk"+"-"*20)
+        print(context_chunks)
 
     context = "\n\n".join(context_chunks)
     return context.strip()
 
-async def ask_doc_bot(question: str):
+async def ask_doc_bot(question: str, organization: str):
     """Ask question to GPT-4 using Weaviate context and short-term memory"""
     global chat_history  # <- use global history
 
     try:
-        context = build_context_from_weaviate_results(question)
+        context = build_context_from_weaviate_results(question, organization=organization)
 
         system_prompt = (
             "You are a helpful assistant that answers questions based on organizational policy documents.\n"
@@ -81,16 +85,18 @@ async def ask_doc_bot(question: str):
         )
 
         answer = response.choices[0].message.content.strip()
+        print("Answer from GPT-4:", answer)
 
         # ✅ Update global history
         chat_history.append({"role": "user", "content": question})
         chat_history.append({"role": "assistant", "content": answer})
+
         
         return JSONResponse(status_code=200, content={
             "status": "success",
             "question": question,
             "answer": answer,
-            "history": chat_history
+            # "history": chat_history
         })
 
     except Exception as e:

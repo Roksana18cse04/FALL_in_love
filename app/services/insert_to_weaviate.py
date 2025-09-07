@@ -6,8 +6,6 @@ from app.services.summarize_pdf import summarize_with_gpt4
 from fastapi.responses import JSONResponse
 from uuid import uuid5, NAMESPACE_URL
 
-class_name = "PolicyDocuments" 
-
 def chunk_text(text, max_chars=7000):
     """Split text into chunks without cutting sentences mid-way."""
     import re
@@ -25,7 +23,7 @@ def chunk_text(text, max_chars=7000):
         chunks.append(current_chunk.strip())
     return chunks
 
-async def weaviate_insertion(file, category="aged care"):
+async def weaviate_insertion(organization, file, category="aged care"):
     
     try:
         # for source: upload file to cloudinary
@@ -51,6 +49,7 @@ async def weaviate_insertion(file, category="aged care"):
             await delete_file(res['uploaded_to'])
             return "Error extracting PDF content"
         summary = await summarize_with_gpt4(data,title)
+        print("summary created successfully------------------")
 
         # Ensure the client is connected
         if not client.is_connected():
@@ -58,11 +57,11 @@ async def weaviate_insertion(file, category="aged care"):
     
          # Get collection
         try:
-            collection = client.collections.get(class_name)
+            collection = client.collections.get(organization)
         except Exception:
             return JSONResponse(status_code=404, content={
                 "status": "error",
-                "message": f"Collection '{class_name}' not found in Weaviate."
+                "message": f"Collection '{organization}' not found in Weaviate."
             })
 
         # Split document text into chunks
@@ -86,11 +85,11 @@ async def weaviate_insertion(file, category="aged care"):
                 },
                 uuid=str(chunk_uuid)
             )
-        print(f"Data inserted into class '{class_name}' successfully.")
+        print(f"Data inserted into class '{organization}' successfully.")
         return JSONResponse(status_code=201, content={
             "status": "success",
             "message": f"Document '{title}' inserted successfully.",
-            "weaviate_class": class_name,
+            "weaviate_class": organization,
             "source": res['link']
         })
         

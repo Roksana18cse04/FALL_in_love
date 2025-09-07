@@ -1,19 +1,19 @@
 from fastapi import FastAPI
-from datetime import datetime
 from app.routes import router
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI()
 
-# from fastapi.middleware.cors import CORSMiddleware
+
 # Allow frontend CORS
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],  # or ["http://localhost:3000"] for React
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or ["http://localhost:3000"] for React
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 from app.services.weaviate_client import client
 
@@ -21,6 +21,17 @@ if not client.is_connected():
     client.connect()
 
 app.include_router(router, prefix="/policy", tags=['Operation'])
+
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Policy Management API"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+
 
 # @app.get("/api/policies")
 # def get_policies():

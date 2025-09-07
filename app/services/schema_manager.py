@@ -3,7 +3,7 @@ from app.services.weaviate_client import client
 from weaviate.classes.config import Property, DataType, Configure, VectorDistances, Tokenization
 
 
-def create_schema():
+async def create_schema(organization: str):
     """Create PolicyDocuments schema with vectorizer configuration"""
     if not client.is_connected():
         client.connect()
@@ -11,10 +11,10 @@ def create_schema():
     try:
         # Check if collection already exists
         collections = client.collections.list_all()
-        if "PolicyDocuments" not in collections:
+        if organization not in collections:
             client.collections.create(
-                name="PolicyDocuments",
-                
+                name=organization,
+
                 # Configure vectorizer - text2vec-openai
                 vectorizer_config=Configure.Vectorizer.text2vec_openai(
                     model="text-embedding-3-small",  # Using available model
@@ -63,12 +63,14 @@ def create_schema():
                     Property(name="last_updated", data_type=DataType.DATE)
                 ]
             )
-            print("Created PolicyDocuments schema with vectorizer.")
+            print(f"Created {organization} schema with vectorizer.")
+            return {"status": "created", "message": f"Collection '{organization}' created successfully."}
         else:
-            print("PolicyDocuments schema already exists.")
-            
+            print(f"{organization} schema already exists.")
+            return {"status": "exists", "message": f"Collection '{organization}' already exists."}
+
     except Exception as e:
-        print(f"Error creating PolicyDocuments schema: {e}")
+        print(f"Error creating {organization} schema: {e}")
         raise e
         
     finally:
@@ -76,8 +78,10 @@ def create_schema():
             client.close()
 
 
+import asyncio
+
 if __name__ == "__main__":
-    create_schema()
+    asyncio.run(create_schema("PolicyDocuments"))
     print("Schema creation script executed.")
 
     # # delete the schema if needed then create_schema function will be commented

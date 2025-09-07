@@ -1,5 +1,6 @@
-from fastapi import APIRouter, UploadFile, File, Query
+from fastapi import APIRouter, Form, UploadFile, File, Query
 from typing import Optional
+from app.services.schema_manager import create_schema
 from app.services.insert_to_weaviate import weaviate_insertion
 from app.services.weaviate_queries import *
 from pydantic import BaseModel
@@ -10,17 +11,24 @@ router = APIRouter()
 
 # Define a request model for structured input
 class ChatRequest(BaseModel):
+    organization: str
     question: str
 
 @router.post("/chatbot")
 async def chatbot_endpoint(request: ChatRequest):
-    return await ask_doc_bot(request.question)
+    return await ask_doc_bot(request.question, request.organization)
 
-@router.post("/insert")
-async def policy_insert(category: str, file: UploadFile = File(...)):
-    return await weaviate_insertion(file, category)
+@router.post("/insert-policy")
+async def policy_insert(
+    organization: str = Form(...),
+    category: str = Form(...),
+    file: UploadFile = File(...)
+):
+    return await weaviate_insertion(organization, file, category)
 
-
+@router.get("/create-organization")
+async def create_organization(organization: str):
+    return await create_schema(organization)
 
 # 4. Get all documents
 @router.get("/documents")
