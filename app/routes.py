@@ -13,10 +13,11 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     organization: str
     question: str
+    auth_token: str
 
 @router.post("/chatbot")
 async def chatbot_endpoint(request: ChatRequest):
-    return await ask_doc_bot(request.question, request.organization)
+    return await ask_doc_bot(request.question, request.organization, request.auth_token)
 
 @router.post("/insert-policy")
 async def policy_insert(

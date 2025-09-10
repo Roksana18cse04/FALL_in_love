@@ -3,7 +3,7 @@ from weaviate.classes.query import MetadataQuery, Filter
 from fastapi.responses import JSONResponse
 from collections import OrderedDict
 
-class_name = "PolicyDocuments"
+class_name = "HomeCare"
 
 #  Semantic Search - Text similarity based search
 async def semantic_search(query_text: str, limit: int = 5):
