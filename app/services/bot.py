@@ -59,7 +59,7 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
     # Fetch chat history from DB
     header = {"Authorization": f"Bearer {auth_token}"}
     history_res = requests.get(
-        "https://jahidtestmysite.pythonanywhere.com/ai_chatbot/User/ChatHistory/",
+        "https://jahidtestmysite.pythonanywhere.com/ai_chatbot/ChatHistory/",
         headers=header
     )
 
@@ -125,7 +125,7 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
             "used_tokens": used_tokens
         }
         res = requests.post(
-            "https://jahidtestmysite.pythonanywhere.com/ai_chatbot/User/ChatHistory/",
+            "https://jahidtestmysite.pythonanywhere.com/ai_chatbot/ChatHistory/",
             json=history_payload,
             headers=header
         )
