@@ -1,10 +1,28 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from app.routes import router
+from app.routes.chatbot import router as chatbot_router
+from app.routes.policy_insert import router as policy_insert_router
+from app.routes.organization import router as organization_router
+from app.routes.documents import router as documents_router
+from app.routes.search import router as search_router
+from app.routes.policy_generate import router as policy_generate_router
+from app.routes.policy_embedding import router as policy_embedding_router
+from app.routes.policy_alignment import router as policy_alignment_router
 from fastapi.middleware.cors import CORSMiddleware
+from app.services.weaviate_client import get_weaviate_client
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Connect to Weaviate
+    client = get_weaviate_client()
+    if not client.is_connected():
+        client.connect()
+    yield
+    # Shutdown: Cleanup
+    if client.is_connected():
+        client.close()
 
-app = FastAPI()
-
+app = FastAPI(lifespan=lifespan)
 
 # Allow frontend CORS
 app.add_middleware(
@@ -15,12 +33,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.services.weaviate_client import client
 
-if not client.is_connected():
-    client.connect()
+app.include_router(chatbot_router, prefix="/policy", tags=["Chatbot"])
+app.include_router(policy_insert_router, prefix="/policy", tags=["Policy Insert"])
+app.include_router(organization_router, prefix="/policy", tags=["Organization"])
+app.include_router(documents_router, prefix="/policy", tags=["Documents"])
+app.include_router(search_router, prefix="/policy", tags=["Search"])
 
-app.include_router(router, prefix="/policy", tags=['Operation'])
+app.include_router(policy_generate_router, prefix="/policy", tags=["Policy Generate"])
+app.include_router(policy_embedding_router, prefix="/policy", tags=["Policy Embedding"])
+app.include_router(policy_alignment_router, prefix="/policy", tags=["Policy Alignment"])
 
 @app.get("/")
 def read_root():

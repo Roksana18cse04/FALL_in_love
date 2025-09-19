@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from app.services.weaviate_client import client
+from app.services.weaviate_client import get_weaviate_client
 from app.services.extract_content import extract_content_from_pdf
 from app.services.dropbox_operation import upload_pdf_to_dropbox, delete_file
 from app.services.summarize_pdf import summarize_with_gpt4
@@ -25,6 +25,7 @@ def chunk_text(text, max_chars=7000):
 
 async def weaviate_insertion(organization, file, category="aged care"):
     
+    client = get_weaviate_client()
     try:
         # for source: upload file to cloudinary
         res = await upload_pdf_to_dropbox(file, category)

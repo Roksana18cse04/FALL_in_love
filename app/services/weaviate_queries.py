@@ -1,4 +1,4 @@
-from app.services.weaviate_client import client
+from app.services.weaviate_client import get_weaviate_client
 from weaviate.classes.query import MetadataQuery, Filter
 from fastapi.responses import JSONResponse
 from collections import OrderedDict
@@ -8,18 +8,19 @@ class_name = "HomeCare"
 #  Semantic Search - Text similarity based search
 async def semantic_search(query_text: str, limit: int = 5):
     """Search documents based on semantic similarity"""
+    client = get_weaviate_client()
     try:
         if not client.is_connected():
             client.connect()
-        
+
         collection = client.collections.get(class_name)
-        
+
         response = collection.query.near_text(
             query=query_text,
             limit=limit,
             return_metadata=MetadataQuery(distance=True, score=True)
         )
-        
+
         results = []
         for obj in response.objects:
             results.append({
@@ -49,6 +50,7 @@ async def semantic_search(query_text: str, limit: int = 5):
 #  Get all documents (paginated)
 async def get_all_documents(limit: int = 20, offset: int = 0):
     """Get all documents with pagination"""
+    client = get_weaviate_client()
     try:
         if not client.is_connected():
             client.connect()
@@ -99,6 +101,7 @@ async def get_all_documents(limit: int = 20, offset: int = 0):
 # Hybrid search (combines semantic and keyword search)
 async def hybrid_search(query_text: str, limit: int = 5, alpha: float = 0.5, offset: int = 0):
     """Hybrid search combining semantic and keyword search"""
+    client = get_weaviate_client()
     try:
         if not client.is_connected():
             client.connect()
@@ -149,6 +152,7 @@ async def hybrid_search(query_text: str, limit: int = 5, alpha: float = 0.5, off
         })
     
 async def hybrid_search_with_category(query_text: str, category: str, limit: int = 5, alpha: float = 0.7, offset: int = 0):
+    client = get_weaviate_client()
     try:
         if not client.is_connected():
             client.connect()
