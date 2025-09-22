@@ -1,32 +1,36 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from app.services.extract_content import extract_content_from_pdf
-from app.services.weaviate_client import get_weaviate_client
-from app.services.embedding_service import embed_text_openai
-import numpy as np
+from app.services.policy_comparison_service import cosine_similarity_test, summarize_pdf_and_policies, combined_alignment_analysis
+import logging
 
 router = APIRouter()
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 @router.post("/user/check-policy-alignment")
 async def check_policy_alignment(file: UploadFile = File(...)):
-    # Extract text from PDF
-    text, title = await extract_content_from_pdf(file)
-    if not text:
-        raise HTTPException(status_code=400, detail="Could not extract text from PDF.")
-    # Embed text
-    embedding = await embed_text_openai(text)
-    # Fetch all stored embeddings from Weaviate
-    client = get_weaviate_client()
-    collection = client.collections.get("PolicyEmbeddings")
-    response = collection.query.fetch_objects(limit=1000)  # adjust limit as needed
-    all_objs = response.objects
-    if not all_objs:
-        raise HTTPException(status_code=404, detail="No stored policy embeddings found.")
-    # Compute cosine similarity with each stored embedding
-    def cosine_similarity(a, b):
-        a = np.array(a)
-        b = np.array(b)
-        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
-    similarities = [cosine_similarity(embedding, obj.properties["embedding"]) for obj in all_objs]
-    max_similarity = max(similarities)
-    percent = round(max_similarity * 100, 2)
-    return {"alignment_percent": percent, "most_similar_policy": all_objs[np.argmax(similarities)].properties["filename"]}
+    """Policy alignment analysis (cosine + LLM summary comparison)."""
+    logger.info(f"Processing file: {file.filename}, size: {file.size} bytes")
+    
+    try:
+        result = await combined_alignment_analysis(file, "PolicyEmbeddings")
+        logger.info(f"Combined policy alignment analysis completed for {file.filename}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Policy alignment analysis failed for {file.filename}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+@router.post("/user/summarize-pdf-and-policies")
+async def summarize_pdf_and_weaviate_policies(file: UploadFile = File(...)):
+    """
+    Fetch Weaviate policy texts and return brief summaries; extract full PDF text and return a brief summary.
+    """
+    try:
+        result = await summarize_pdf_and_policies(file, "PolicyEmbeddings")
+        return result
+    except Exception as e:
+        logger.error(f"Summarization failed for {file.filename}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")

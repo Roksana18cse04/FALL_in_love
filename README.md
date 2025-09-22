@@ -64,7 +64,23 @@ uvicorn app.main:app --reload
 
 ### Check Policy Alignment (User)
 `POST /policy/user/check-policy-alignment`
-- Upload a PDF, extract and embed content, compare with stored embeddings, and return alignment percentage.
+- Input: PDF file (multipart/form-data, field name `file`).
+- Process:
+  - Extract full text from PDF
+  - Cosine similarity against stored policy embeddings to compute `not_alignment_percent`
+  - LLM summarizes the PDF and the main policies (high-context via chunking)
+  - LLM returns a single contradiction paragraph; if no direct contradictions, it states that and highlights key differences
+- Response example:
+```json
+{
+  "not_alignment_percent": 42.5,
+  "contradiction_paragraph": "There are no direct contradictions... main differences are ..."
+}
+```
+
+### Summarize PDF and Policies (Utility)
+`POST /policy/user/summarize-pdf-and-policies`
+- Returns brief summaries of the uploaded PDF and the main policies. Useful for debugging/inspection.
 
 ### Generate Policy with LLM
 `POST /policy/generate-policy`
@@ -92,9 +108,9 @@ requirements.txt    # Python dependencies
 ```
 
 ## Notes
-- Make sure your Weaviate instance is running and accessible.
-- The backend will auto-create the required Weaviate collection if it does not exist.
-- For large PDFs, text is chunked and embeddings are averaged.
+- Ensure your Weaviate instance is reachable.
+- For large PDFs/policies, the service chunks text and uses a high max context for LLM summarization.
+- Cosine similarity uses OpenAI embeddings; `not_alignment_percent` is `100 - max_similarity*100`.
 
 ## License
 MIT
