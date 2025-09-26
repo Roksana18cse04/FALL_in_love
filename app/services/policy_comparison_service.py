@@ -1,43 +1,25 @@
-"""
-Policy Comparison Service (Cosine-only)
 
-Provides cosine similarity comparison between an uploaded PDF and stored policy
-embeddings in Weaviate. Removed ToC extraction, fallback policy logic, and LLM analysis.
-"""
 
-import logging
-from typing import Dict, List, Tuple
-import json
 
 import numpy as np
 from fastapi import HTTPException, UploadFile
-from openai import OpenAI
-
-from app.config import OPENAI_API_KEY
 from app.services.extract_content import extract_content_from_pdf
 from app.services.weaviate_client import get_weaviate_client
 
-# Configure logging
-logger = logging.getLogger(__name__)
 
 
-def cosine_similarity(vector_a: List[float], vector_b: List[float]) -> float:
-    """
-    Calculate cosine similarity between two vectors.
-    """
+def cosine_similarity(vector_a, vector_b):
     a = np.array(vector_a)
     b = np.array(vector_b)
-
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
     if norm_a == 0 or norm_b == 0:
         return 0.0
-
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
+
 def fetch_weaviate_policies(organization: str):
-    """Fetch policy objects (with embeddings) from Weaviate."""
     client = get_weaviate_client()
     if not client.is_connected():
         client.connect()
@@ -124,23 +106,18 @@ def fetch_weaviate_full_text(organization: str) -> str:
     return "\n\n\n".join(texts)
 
 
-async def extract_pdf_content(file: UploadFile) -> Tuple[str, str]:
-    """Extract and prepare PDF content for analysis."""
+
+async def extract_pdf_content(file: UploadFile):
     try:
         await file.seek(0)
         text, title = await extract_content_from_pdf(file)
-
         if not text or not text.strip():
             raise HTTPException(
                 status_code=400,
                 detail="No text could be extracted from the PDF."
             )
-
-        logger.info(f"PDF '{file.filename}' processed successfully")
         return text.strip(), title or "Untitled Document"
-
     except Exception as e:
-        logger.error(f"PDF extraction failed for {file.filename}: {str(e)}")
         raise HTTPException(
             status_code=400,
             detail=f"Failed to process PDF: {str(e)}"
@@ -244,19 +221,15 @@ async def generate_contradiction_paragraph(openai_client: OpenAI, pdf_summary: s
         return "Analysis unavailable."
 
 
-async def cosine_similarity_test(file: UploadFile, organization: str = "PolicyEmbeddings") -> Dict[str, float]:
-    """Compute not_alignment_percent using cosine similarity only."""
-    logger.info(f"Starting cosine similarity test for: {file.filename}")
 
-    # Extract PDF content
+from app.config import OPENAI_API_KEY
+from openai import OpenAI
+
+async def cosine_similarity_test(file: UploadFile, organization: str = "PolicyEmbeddings"):
     full_text, _title = await extract_pdf_content(file)
-
-    # Generate embedding for uploaded document
     try:
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-        # Prepare text for embedding (handle length limits)
-        max_chars = 8192 * 3  # OpenAI embedding model limit
+        max_chars = 8192 * 3
         if len(full_text) > max_chars:
             embedding_text = (
                 full_text[:max_chars // 2]
@@ -265,46 +238,31 @@ async def cosine_similarity_test(file: UploadFile, organization: str = "PolicyEm
             )
         else:
             embedding_text = full_text
-
         embedding_response = openai_client.embeddings.create(
             model="text-embedding-3-small",
             input=embedding_text
         )
         uploaded_embedding = embedding_response.data[0].embedding
-        logger.info("Generated embedding for uploaded document")
-
     except Exception as e:
-        logger.error(f"Embedding generation failed: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate embedding: {str(e)}"
         )
-
-    # Fetch policies from Weaviate
     policies = fetch_weaviate_policies(organization)
-
-    # Calculate cosine similarities
-    similarities: List[float] = []
-    for i, policy_obj in enumerate(policies):
+    similarities = []
+    for policy_obj in policies:
         policy_embedding = policy_obj.properties.get("embedding", [])
         if policy_embedding:
             similarity_score = cosine_similarity(uploaded_embedding, policy_embedding)
             similarities.append(similarity_score)
-
     if not similarities:
         raise HTTPException(
             status_code=500,
             detail="No valid embeddings found for comparison"
         )
-
     max_similarity = max(similarities)
     alignment_percent = round(max_similarity * 100, 2)
     not_alignment_percent_cosine = round(100 - alignment_percent, 2)
-
-    logger.info(
-        f"Cosine analysis completed: {alignment_percent}% aligned (max)"
-    )
-
     return {
         "not_alignment_percent": not_alignment_percent_cosine
     }
