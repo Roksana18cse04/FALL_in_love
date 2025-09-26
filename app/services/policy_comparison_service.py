@@ -164,7 +164,7 @@ async def compare_summaries_with_llm(openai_client: OpenAI, pdf_summary: str, we
                 {"role": "system", "content": "You are a precise policy analyst. Return strict JSON."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.5,
+            temperature=0.1,
             max_tokens=1500,
         )
         content = resp.choices[0].message.content.strip()
@@ -196,7 +196,7 @@ async def detect_conflicts_or_differences(openai_client: OpenAI, pdf_summary: st
                 {"role": "system", "content": "You are a precise compliance analyst. Return strict JSON."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.4,
+            temperature=0.1,
             max_tokens=1500,
         )
         content = resp.choices[0].message.content.strip()
@@ -235,7 +235,7 @@ async def generate_contradiction_paragraph(openai_client: OpenAI, pdf_summary: s
                 {"role": "system", "content": "You write precise compliance summaries in a single paragraph."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.5,
+            temperature=0.2,
             max_tokens=700,
         )
         return resp.choices[0].message.content.strip()
