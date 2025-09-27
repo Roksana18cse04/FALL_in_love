@@ -1,14 +1,17 @@
+
 # create schema for Weaviate v4.16.4
-from app.services.weaviate_client import client
+from app.services.weaviate_client import get_weaviate_client
 from weaviate.classes.config import Property, DataType, Configure, VectorDistances, Tokenization
 
 
 async def create_schema(organization: str):
     """Create PolicyDocuments schema with vectorizer configuration"""
-    if not client.is_connected():
-        client.connect()
-    
+
+    client = get_weaviate_client()
     try:
+        if not client.is_connected():
+            client.connect()
+
         # Check if collection already exists
         collections = client.collections.list_all()
         if organization not in collections:

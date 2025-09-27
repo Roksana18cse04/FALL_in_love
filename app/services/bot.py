@@ -1,5 +1,5 @@
 import openai
-from app.services.weaviate_client import client
+from app.services.weaviate_client import get_weaviate_client
 from weaviate.classes.query import MetadataQuery
 from fastapi.responses import JSONResponse
 from app.config import OPENAI_API_KEY
@@ -9,6 +9,7 @@ import requests
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 def build_context_from_weaviate_results(query_text, organization, limit=3, alpha=0.5):
+    client = get_weaviate_client()
     if not client.is_connected():
         client.connect()
 
@@ -149,9 +150,7 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
             "status": "error",
             "message": str(e)
         })
-    finally:
-        if client.is_connected():
-            client.close()
+    # Remove finally block, or re-initialize client if needed for closing
 
 
 import asyncio
