@@ -235,3 +235,65 @@ async def search_by_category(category: str, limit: int = 10, offset: int = 0):
             "status": "error",
             "message": str(e)
         })
+
+
+#########################################################################
+
+import weaviate
+from weaviate.classes.query import Filter, MetadataQuery
+
+def query(query_text: str, category: str, document_type: str, summary: str, limit: int = 5, alpha: float = 0.5):
+    # Client connection check
+    if not client.is_connected():
+        client.connect()
+    
+    collection = client.collections.get("HomeCare")
+
+    # v4 এর Filter class ব্যবহার করে
+    filters = Filter.all_of([
+        Filter.by_property("category").equal(category),
+        Filter.by_property("document_type").equal(document_type)
+    ])
+
+    # MetadataQuery for return metadata
+    metadata_query = MetadataQuery(score=True, distance=True)
+
+    try:
+        response = collection.query.hybrid(
+            query=query_text,
+            alpha=alpha,
+            limit=limit,
+            where_filter=filters, 
+            return_metadata=metadata_query
+        )
+
+        # Results display
+        for obj in response.objects:
+            print("Title:", obj.properties.get("title", "N/A"))
+            print("Category:", obj.properties.get("category", "N/A"))
+            print("Document Type:", obj.properties.get("document_type", "N/A"))
+            print("Score:", getattr(obj.metadata, 'score', 'N/A'))
+            print("Distance:", getattr(obj.metadata, 'distance', 'N/A'))
+            print("-----")
+            
+        return response.objects
+        
+    except Exception as e:
+        print(f"Query error: {e}")
+        return []
+
+if __name__ == "__main__":
+    try:
+        results = query(
+            query_text="i want to know about aged care policy",
+            category="Aged Care",
+            document_type="policy", 
+            summary="Sample summary",
+            limit=5,
+            alpha=0.5
+        )
+        
+        print(f"\nFound {len(results)} results")
+        
+    finally:
+        client.close() 

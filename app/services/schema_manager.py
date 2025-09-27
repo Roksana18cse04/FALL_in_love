@@ -14,21 +14,29 @@ async def create_schema(organization: str):
         if organization not in collections:
             client.collections.create(
                 name=organization,
-
-                # Configure vectorizer - text2vec-openai
-                vectorizer_config=Configure.Vectorizer.text2vec_openai(
-                    model="text-embedding-3-small",  # Using available model
-                    vectorize_collection_name=False
-                ),
-                
-                # Configure vector index settings
-                vector_index_config=Configure.VectorIndex.hnsw(
-                    distance_metric=VectorDistances.COSINE,
-                    ef_construction=128,
-                    max_connections=64
+                vector_config=Configure.Vectorizer.text2vec_openai(
+                    model="text-embedding-3-small",
+                    vectorize_collection_name=False,
+                    vector_index_config=Configure.VectorIndex.hnsw(
+                        distance_metric=VectorDistances.COSINE,
+                        ef_construction=128,
+                        max_connections=64
+                    )
                 ),
                 
                 properties=[
+                    Property(
+                        name="document_id",
+                        data_type=DataType.TEXT,
+                        vectorize_property_name=False,
+                        tokenization=Tokenization.FIELD
+                    ),
+                    Property(
+                        name="document_type",
+                        data_type=DataType.TEXT,
+                        vectorize_property_name=False,
+                        tokenization=Tokenization.FIELD
+                    ),
                     Property(
                         name="title", 
                         data_type=DataType.TEXT,
@@ -81,12 +89,12 @@ async def create_schema(organization: str):
 import asyncio
 
 if __name__ == "__main__":
-    asyncio.run(create_schema("PolicyDocuments"))
+    asyncio.run(create_schema("HomeCare"))
     print("Schema creation script executed.")
 
     # # delete the schema if needed then create_schema function will be commented
     # if not client.is_connected():
     #     client.connect()
-    #     client.collections.delete("PolicyDocuments")
+    #     client.collections.delete("HomeCare")
     #     print("PolicyDocuments schema deleted.")
     #     client.close()

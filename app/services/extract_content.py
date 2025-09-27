@@ -24,3 +24,26 @@ async def extract_content_from_pdf(file):
         print(f"Error extracting PDF content: {str(e)}")
         title = file.filename.replace(".pdf", "") if file.filename else "Unknown Document"
         return "", title
+
+
+from pypdf import PdfReader
+async def extract_content_from_url(url):
+    # url = "https://www.dropbox.com/scl/fi/i4js5sapbbihzkbejonzy/provider-registration-policy.pdf?rlkey=2egqmz4na3g5v44w3976lpgo2&st=vicm51sf&dl=1"
+    from io import BytesIO
+    import requests
+    data = requests.get(url)
+    pdf_file = BytesIO(data.content)
+    # Read PDF
+    reader = PdfReader(pdf_file)
+
+    # Extract all text
+    data = ""
+    for page in reader.pages:
+        data += page.extract_text() + "\n"
+
+    # Title from URL or PDF metadata
+    title = reader.metadata.title if reader.metadata and reader.metadata.title else url.split("/")[-1].split("?")[0]
+
+    # print("Title:", title)
+    # print("Data (first 500 chars):", data[:500])
+    return data, title

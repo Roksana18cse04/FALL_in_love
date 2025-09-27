@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
+import json
 from app.services.weaviate_client import client
-from app.services.extract_content import extract_content_from_pdf
+from app.services.extract_content import extract_content_from_url
 from app.services.dropbox_operation import upload_pdf_to_dropbox, delete_file
 from app.services.summarize_pdf import summarize_with_gpt4
 from fastapi.responses import JSONResponse
@@ -23,33 +24,11 @@ def chunk_text(text, max_chars=7000):
         chunks.append(current_chunk.strip())
     return chunks
 
-async def weaviate_insertion(organization, file, category="aged care"):
+async def weaviate_insertion(organization, doc_db_id, document_type, document_url, summary, category="aged care"):
     
     try:
-        # for source: upload file to cloudinary
-        res = await upload_pdf_to_dropbox(file, category)
-        if res['status_code']==409:
-            return JSONResponse(res)
-        
-        elif res.get('status_code') != 200:
-            return JSONResponse(status_code=500, content={
-                "status": "error",
-                "message": res.get("message", "Unknown error during upload.")
-            })
-
-        print("dropbox response------------", res)
-
-         # 🔁 FIX: Rewind file stream before extracting content
-        file.file.seek(0)
-        
-        # Extract content from PDF
-        data, title = await extract_content_from_pdf(file)
-        if data=="":
-            # remove file from dropbox
-            await delete_file(res['uploaded_to'])
-            return "Error extracting PDF content"
-        summary = await summarize_with_gpt4(data,title)
-        print("summary created successfully------------------")
+        # Extract content from URL
+        data, title = await extract_content_from_url(document_url)
 
         # Ensure the client is connected
         if not client.is_connected():
@@ -68,18 +47,20 @@ async def weaviate_insertion(organization, file, category="aged care"):
         chunks = chunk_text(data)
 
         
-        document_id = uuid5(NAMESPACE_URL, res['link'])
+        document_id = uuid5(NAMESPACE_URL, document_url)
 
         # Insert chunks
         for idx, chunk in enumerate(chunks):
             chunk_uuid = uuid5(document_id, f"chunk-{idx}")
             collection.data.insert(
                 properties={
+                    "document_id": str(doc_db_id),
+                    "document_type": document_type,
                     "title": title,
                     "summary": summary,
                     "category": category,
+                    "source": document_url,
                     "data": chunk,
-                    "source": res['link'],
                     "created_at": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
                     "last_updated": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
                 },
@@ -89,8 +70,9 @@ async def weaviate_insertion(organization, file, category="aged care"):
         return JSONResponse(status_code=201, content={
             "status": "success",
             "message": f"Document '{title}' inserted successfully.",
-            "weaviate_class": organization,
-            "source": res['link']
+            "organization": organization,
+            "source": document_url,
+            "document_id": str(doc_db_id)
         })
         
     except Exception as e:
@@ -100,3 +82,16 @@ async def weaviate_insertion(organization, file, category="aged care"):
         })
     finally:
         client.close()
+
+if __name__ == "__main__":
+    import asyncio
+    response = asyncio.run(weaviate_insertion(
+        organization="HomeCare",
+        doc_db_id=123,
+        document_type="Policy Document",
+        document_url="https://www.dropbox.com/scl/fi/i4js5sapbbihzkbejonzy/provider-registration-policy.pdf?rlkey=2egqmz4na3g5v44w3976lpgo2&st=vicm51sf&dl=1",
+        summary="This is a sample summary of the policy document.",
+        category="Aged Care"
+    ))
+    from starlette.responses import JSONResponse
+    print(json.loads(response.body))
