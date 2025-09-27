@@ -1,3 +1,4 @@
+from warnings import filters
 from app.services.weaviate_client import get_weaviate_client
 from weaviate.classes.query import MetadataQuery, Filter
 from fastapi.responses import JSONResponse
@@ -242,61 +243,115 @@ async def search_by_category(category: str, limit: int = 10, offset: int = 0):
 
 
 #########################################################################
-
+import weaviate
 from weaviate.classes.query import Filter, MetadataQuery
 
-def query(query_text: str, category: str, document_type: str, summary: str, limit: int = 5, alpha: float = 0.5):
-    # Client connection check
+from collections import defaultdict
+
+def _version_number(v):
+    """Convert version string like 'v2' or '2' to int for sorting."""
+    try:
+        if isinstance(v, str) and v.startswith("v"):
+            return int(v[1:])
+        return int(v)
+    except (ValueError, TypeError):
+        return 1
+    
+def pick_latest_per_title(objects):
+    grouped = defaultdict(list)
+    for obj in objects:
+        title = obj.properties.get("title", "")
+        grouped[title].append(obj)
+
+    latest = []
+    for title, objs in grouped.items():
+        best = max(objs, key=lambda o: _version_number(o.properties.get("version")))
+        latest.append(best)
+    return latest
+
+def efficient_query(query_text: str, category: str, document_type: str,
+                    limit: int = 5, alpha: float = 0.5):
+    """
+    Step 1: Filter objects by metadata (category + document_type)
+    Step 2: Pick latest version per title
+    Step 3: Do near_text (vector search) only on those UUIDs
+    """
+
     if not client.is_connected():
         client.connect()
-    
+
     collection = client.collections.get("HomeCare")
 
-    # v4 এর Filter class ব্যবহার করে
-    filters = Filter.all_of([
-        Filter.by_property("category").equal(category),
-        Filter.by_property("document_type").equal(document_type)
-    ])
-
-    # MetadataQuery for return metadata
-    metadata_query = MetadataQuery(score=True, distance=True)
-
     try:
-        response = collection.query.hybrid(
-            query=query_text,
-            alpha=alpha,
-            limit=limit,
-            where_filter=filters, 
-            return_metadata=metadata_query
+        # --- Step 1: Metadata filter ---
+        filtered = collection.query.fetch_objects(
+            filters=(
+                Filter.by_property("category").equal(category) &
+                Filter.by_property("document_type").equal(document_type)
+            ),
+            limit=9999  # Pull all matching to handle versioning
         )
 
-        # Results display
-        for obj in response.objects:
-            print("Title:", obj.properties.get("title", "N/A"))
-            print("Category:", obj.properties.get("category", "N/A"))
-            print("Document Type:", obj.properties.get("document_type", "N/A"))
-            print("Score:", getattr(obj.metadata, 'score', 'N/A'))
-            print("Distance:", getattr(obj.metadata, 'distance', 'N/A'))
+        if not filtered.objects:
+            print("No documents found matching the criteria")
+            return []
+
+        print(f"Filtered to {len(filtered.objects)} documents")
+
+        # --- Step 2: Pick latest version per title ---
+        latest_objs = pick_latest_per_title(filtered.objects)
+        print(f"Selected {len(latest_objs)} latest version documents")
+
+        # --- Step 3: Vector search on latest objects only ---
+        uuids = [str(obj.uuid) for obj in latest_objs]
+        uuid_filter = Filter.by_id().contains_any(uuids)
+
+        vector_response = collection.query.near_text(
+            query=query_text,
+            filters=uuid_filter,
+            # alpha=alpha,
+            limit=limit,
+            return_metadata=MetadataQuery(score=True)
+        )
+
+        # Print results for debugging
+        for i, obj in enumerate(vector_response.objects, 1):
+            print(f"{i}. Title: {obj.properties.get('title')}")
+            print(f"   Category: {obj.properties.get('category')}")
+            print(f"   Document Type: {obj.properties.get('document_type')}")
+            print(f"   Content: {obj.properties.get('data', '')[:100]}...")
+            print(f"   Version: {obj.properties.get('version', 'v1')}")
             print("-----")
-            
-        return response.objects
-        
+
+        return vector_response.objects
+
     except Exception as e:
         print(f"Query error: {e}")
         return []
 
 if __name__ == "__main__":
     try:
-        results = query(
+        results = efficient_query(
             query_text="i want to know about aged care policy",
-            category="Aged Care",
-            document_type="policy", 
-            summary="Sample summary",
-            limit=5,
-            alpha=0.5
+            category="privacy_confidentiality_information_governance",
+            document_type="policy",
+            limit=5
         )
-        
-        print(f"\nFound {len(results)} results")
-        
+        print(f"\nTotal results: {len(results)}")
     finally:
-        client.close() 
+        client.close()
+
+
+
+
+# if __name__ == "__main__":
+#     from weaviate.classes.query import Filter
+
+#     jeopardy = client.collections.use("HomeCare")
+#     response = jeopardy.query.fetch_objects(
+#         filters=Filter.by_property("category").equal("Aged Care"),
+#         limit=3
+#     )
+
+#     for o in response.objects:
+#         print(o.properties)

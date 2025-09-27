@@ -90,6 +90,7 @@ Output strictly as JSON:
   "category": "value_from_list",
   "document_type": "value_from_list"
 }}
+3. If unsure, use "others" for either field.
 """
     try:
         response = openai_client.chat.completions.create(
@@ -104,17 +105,23 @@ Output strictly as JSON:
         result = json.loads(response.choices[0].message.content.strip())
         # correct json if necessary
 
-        return result
+        return {
+            "category": result.get("category", "others"),
+            "document_type": result.get("document_type", "others"),
+            "is_document_related": not (result['category'] == "others" and result['document_type'] == "others"),
+            "used_tokens": response.usage.total_tokens
+        }
     except Exception as e:
         print(f"Error predicting category/type: {e}")
-        return {"category": "others", "document_type": "others"}
+        return {"category": "others", "document_type": "others", "is_document_related": False, "used_tokens": 0}
 
 
 if __name__=="__main__":
-    # text = "i want to know about infection control policy"
-    # result = predict_relevant_category_and_type(query=text)
-    # print(result)
-    # # Example Output: {'category': 'infection_prevention_control', 'document_type': 'policy'}
-    summary = """This policy outlines the procedures for infection prevention and control within the aged care facility. It includes guidelines on hand hygiene, use of personal protective equipment (PPE), cleaning and disinfection protocols, and management of infectious diseases. The policy aims to protect residents, staff, and visitors from infections and ensure a safe environment."""
-    result = classify_category(docs_summary=summary)    
+    text = "what is privacy policy?"
+    result = predict_relevant_category_and_type(query=text)
     print(result)
+
+    # # Example Output: {'category': 'infection_prevention_control', 'document_type': 'policy'}
+    # summary = """This policy outlines the procedures for infection prevention and control within the aged care facility. It includes guidelines on hand hygiene, use of personal protective equipment (PPE), cleaning and disinfection protocols, and management of infectious diseases. The policy aims to protect residents, staff, and visitors from infections and ensure a safe environment."""
+    # result = classify_category(docs_summary=summary)    
+    # print(result)

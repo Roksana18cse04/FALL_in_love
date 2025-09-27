@@ -17,14 +17,26 @@ async def create_schema(organization: str):
         if organization not in collections:
             client.collections.create(
                 name=organization,
-                vector_config=Configure.Vectorizer.text2vec_openai(
-                    model="text-embedding-3-small",
-                    vectorize_collection_name=False,
-                    vector_index_config=Configure.VectorIndex.hnsw(
-                        distance_metric=VectorDistances.COSINE,
-                        ef_construction=128,
-                        max_connections=64
-                    )
+                # vector_config=Configure.Vectorizer.text2vec_openai(
+                #     model="text-embedding-3-small",
+                #     vectorize_collection_name=False,
+                #     vector_index_config=Configure.VectorIndex.hnsw(
+                #         distance_metric=VectorDistances.COSINE,
+                #         ef_construction=128,
+                #         max_connections=64
+                #     )
+
+                # ------------Configure vectorizer - text2vec-openai
+                vectorizer_config=Configure.Vectorizer.text2vec_openai(
+                    model="text-embedding-3-small",  # Using available model
+                    vectorize_collection_name=False
+                ),
+                # Configure vector index settings
+                vector_index_config=Configure.VectorIndex.hnsw(
+                    distance_metric=VectorDistances.COSINE,
+                    ef_construction=128,
+                    max_connections=64
+
                 ),
                 
                 properties=[
@@ -54,6 +66,12 @@ async def create_schema(organization: str):
                     ),
                     Property(
                         name="category", 
+                        data_type=DataType.TEXT,
+                        vectorize_property_name=False,
+                        tokenization=Tokenization.WORD
+                    ),
+                    Property(
+                        name="version",
                         data_type=DataType.TEXT,
                         vectorize_property_name=False,
                         tokenization=Tokenization.WORD
@@ -96,8 +114,15 @@ if __name__ == "__main__":
     print("Schema creation script executed.")
 
     # # delete the schema if needed then create_schema function will be commented
-    # if not client.is_connected():
-    #     client.connect()
+    # print("Deleting HomeCare schema...")
+    # try:
+    #     client = get_weaviate_client()
+    #     if not client.is_connected():
+    #         print("Connecting to Weaviate...")
+    #         client.connect()
     #     client.collections.delete("HomeCare")
     #     print("PolicyDocuments schema deleted.")
-    #     client.close()
+    # finally:
+    #     if client.is_connected():
+    #         print("Closing Weaviate connection...")
+    #         client.close()
