@@ -80,9 +80,8 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ur
         # Split document text into chunks
         chunks = chunk_text(data)
 
-        
-        document_id = uuid5(NAMESPACE_URL, document_url)
         version = await get_next_version(client, organization, title)
+        document_id = uuid5(NAMESPACE_URL, f"{document_url}-{version}")
 
         # Insert chunks
         for idx, chunk in enumerate(chunks):
@@ -348,8 +347,8 @@ if __name__ == "__main__":
 #                 "message": f"Collection '{organization}' not found in Weaviate."
 #             })
 
-        # # Ensure version field exists in the collection
-        # ensure_version_field(client, organization)
+#         # Ensure version field exists in the collection
+#         ensure_version_field(client, organization)
         
 #         # Get the next version for this document title
 #         document_version = get_next_version(client, organization, title)
