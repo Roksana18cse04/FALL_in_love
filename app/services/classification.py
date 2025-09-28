@@ -1,8 +1,7 @@
+import os
 from app.config import OPENAI_API_KEY
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 import json
-
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 categories = [
     {"name": "Governance & Leadership", "value": "governance_leadership"},
@@ -35,7 +34,7 @@ document_types = [
     "guideline",
     "standard"
 ]
-def classify_category(docs_summary: str):
+async def classify_category(docs_summary: str):
     prompt = f"""
 You are an assistant that classifies aged-care organization documents.
 
@@ -46,33 +45,32 @@ You are an assistant that classifies aged-care organization documents.
 Document text:
 {docs_summary}
 """
-
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You classify aged-care documents into category."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=300,
-            temperature=0
-        )
+        async with AsyncOpenAI(api_key=OPENAI_API_KEY) as client:
+            response = await client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You classify aged-care documents into category."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=300,
+                temperature=0
+            )
 
         raw_content = response.choices[0].message.content.strip()
         print("Raw docs category classification response:", raw_content)
-        # Normalize: remove surrounding quotes and extra spaces
         category = raw_content.strip().strip('"').strip("'")
 
-        return {"category": category}
+        return {"category": category, "used_tokens": response.usage.total_tokens}
 
     except Exception as e:
         print(f"Error during classification: {e}")
-        return {"category": "others"}
+        return {"category": "others", "used_tokens": 0, "error": str(e)}
 
 
 
 # Predict both category and document_type for Staff
-def predict_relevant_category_and_type(query: str):
+async def predict_relevant_category_and_type(query: str):
     prompt = f"""
 You are an assistant that helps staff find the right aged-care documents.
 
@@ -93,15 +91,16 @@ Output strictly as JSON:
 3. If unsure, use "others" for either field.
 """
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that maps staff queries to document categories and types."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=100,
-            temperature=0
-        )
+        async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
+            response = openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that maps staff queries to document categories and types."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=100,
+                temperature=0
+            )
         result = json.loads(response.choices[0].message.content.strip())
         # correct json if necessary
 

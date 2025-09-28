@@ -62,18 +62,16 @@ async def summarize_chunk_with_gpt4(text_chunk, chunk_num, total_chunks):
         Provide a brief summary focusing on the key points in this section.
         """
         
-        client = AsyncOpenAI(api_key=api_key)
-        
-        response = await client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=500,
-            temperature=0.3
-        )
-        
+        async with AsyncOpenAI(api_key=api_key) as client:
+            response = await client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                temperature=0.3
+            )
         return response.choices[0].message.content
         
     except Exception as e:
@@ -119,20 +117,19 @@ async def summarize_with_gpt4(text, title):
             Format the summary in a clear, structured manner.
             """
             
-            client = AsyncOpenAI(api_key=api_key)
-            
-            response = await client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries of documents."},
-                    {"role": "user", "content": final_prompt}
-                ],
-                max_tokens=1500,
-                temperature=0.3
-            )
-            
-            return response.choices[0].message.content
-            
+            async with AsyncOpenAI(api_key=api_key) as client:
+                response = await client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries of documents."},
+                        {"role": "user", "content": final_prompt}
+                    ],
+                    max_tokens=1500,
+                    temperature=0.3
+                )
+
+            summary_content = response.choices[0].message.content
+
         else:
             prompt = f"""
             Please provide a comprehensive summary of the following document titled "{title}".
@@ -149,23 +146,23 @@ async def summarize_with_gpt4(text, title):
             
             print("Generating summary with GPT-4...")
             
-            client = AsyncOpenAI(api_key=api_key)
-            
-            response = await client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries of documents."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1500,
-                temperature=0.3
-            )
-            
-            return response.choices[0].message.content
-        
+            async with AsyncOpenAI(api_key=api_key) as client:
+                response = await client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries of documents."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=1500,
+                    temperature=0.3
+                )
+            summary_content = response.choices[0].message.content
+
+        return {"summary": summary_content, "used_tokens": response.usage.total_tokens}
+
     except Exception as e:
         print(f"Error calling GPT-4 API: {e}")
-        return None
+        return {"message": str(e), "summary": None, "used_tokens": 0}
 
 async def main():
     pdf_path = "app/data/provider-registration-policy.pdf"

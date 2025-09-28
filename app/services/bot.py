@@ -6,11 +6,10 @@ from app.services.classification import predict_relevant_category_and_type
 from weaviate.classes.query import MetadataQuery
 from fastapi.responses import JSONResponse
 from app.config import OPENAI_API_KEY
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 import requests
 from collections import defaultdict
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
 BACKEND_URL = "https://jahidtestmysite.pythonanywhere.com/ai_chatbot/ChatHistory/"
 
 def _version_number(v):
@@ -152,11 +151,12 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
     messages.append({"role": "user", "content": user_content})
 
     # 🟢 GPT-4 call
-    response = openai_client.chat.completions.create(
-        model="gpt-4",
-        messages=messages,
-        temperature=0.3
-    )
+    async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            temperature=0.3
+        )
 
     answer = response.choices[0].message.content.strip()
     print("Question:", question)

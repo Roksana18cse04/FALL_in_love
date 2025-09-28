@@ -5,9 +5,9 @@ from app.services.bot import ask_doc_bot
 router = APIRouter()
 
 class ChatRequest(BaseModel):
-    organization: str
-    question: str
-    auth_token: str
+    organization: str = "HomeCare"
+    question: str = "What is the policy on data privacy?"
+    auth_token: str = "your_auth_token"
 
 @router.post("/chatbot")
 async def chatbot_endpoint(request: ChatRequest):

@@ -1,8 +1,10 @@
 from pydoc import text
 from fastapi import APIRouter, Form, UploadFile, File, Query
 from typing import Optional
+
+from numpy import delete
 from app.services.schema_manager import create_schema
-from app.services.insert_to_weaviate import weaviate_insertion
+from app.services.weaviate_data_insertion import weaviate_insertion
 from app.services.weaviate_queries import *
 from pydantic import BaseModel
 from app.services.bot import ask_doc_bot
@@ -23,8 +25,8 @@ class ChatRequest(BaseModel):
 async def chatbot_endpoint(request: ChatRequest):
     return await ask_doc_bot(request.question, request.organization, request.auth_token)
 
-@router.post("/insert-policy")
-async def policy_insert(
+@router.post("/insert-document")
+async def document_insert(
     organization: str = Form(...),
     category: str = Form(...),
     url: str = Form(...),
@@ -54,7 +56,27 @@ async def get_summary(file: UploadFile = File(...)):
 
     except Exception as e:
         return {"error": str(e)}
-    
+
+# remove weaviate data
+from app.services.weaviate_data_deletion import delete_weaviate_data
+@router.delete("/delete-document")
+async def delete_document(
+    organization: str, 
+    category: str, 
+    document_type: str, 
+    filename: str, 
+    version: str
+):
+    response = await delete_weaviate_data(organization, category, document_type, filename, version)
+    print("Deletion response:", response)
+    return response
+
+# delete schema
+from app.services.schema_manager import delete_schema
+@router.delete("/delete-organization")
+async def delete_organization(organization: str):
+    return await delete_schema(organization)
+
 # delete file from cloud storage
 # @router.delete("/delete-file")
 # async def delete_file(file_id: str):
