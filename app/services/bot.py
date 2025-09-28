@@ -6,79 +6,55 @@ from app.services.classification import predict_relevant_category_and_type
 from weaviate.classes.query import MetadataQuery
 from fastapi.responses import JSONResponse
 from app.config import OPENAI_API_KEY
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 import requests
+from collections import defaultdict
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
 BACKEND_URL = "https://jahidtestmysite.pythonanywhere.com/ai_chatbot/ChatHistory/"
 
-# def build_context_from_weaviate_results(query_text, organization, limit=3, alpha=0.5):
-#     client = get_weaviate_client()
-#     if not client.is_connected():
-#         client.connect()
+def _version_number(v):
+    """Convert version string like 'v2' or '2' to int for sorting."""
+    try:
+        if isinstance(v, str) and v.startswith("v"):
+            return int(v[1:])
+        return int(v)
+    except (ValueError, TypeError):
+        return 1
+    
+def pick_latest_per_title(objects):
+    grouped = defaultdict(list)
+    for obj in objects:
+        title = obj.properties.get("title", "")
+        grouped[title].append(obj)
 
-#     collection = client.collections.get(organization)
-
-#     response = collection.query.hybrid(
-#         query=query_text,
-#         alpha=alpha,
-#         limit=limit,
-#         return_metadata=MetadataQuery(score=True)
-#         # return_metadata=MetadataQuery(
-#         #     score=True,
-#         #     uuid=True,
-#         #     properties=True  # fetch all properties
-#         # )
-#     )
-
-#     context_chunks = []
-#     for obj in response.objects:
-#         props = obj.properties
-#         uuid = obj.uuid
-#         # score = obj.score
-
-#         # Format all properties as key: value pairs for context
-#         excluded_props = {"summary"}
-#         props_text = "\n".join(
-#             f"{key}: {value}" 
-#             for key, value in props.items() if key not in excluded_props
-#         )
-#         # print("properties-----------", props)
-
-#         chunk = (
-#             f"UUID: {uuid}\n"
-#             # f"Score: {score}\n"
-#             f"Properties:\n{props_text}\n"
-#             "-----"
-#         )
-#         context_chunks.append(chunk)
-#         # print("context chunk"+"-"*20)
-#         # print(context_chunks)
-
-#     context = "\n\n".join(context_chunks)
-#     return context.strip()
+    latest = []
+    for title, objs in grouped.items():
+        best = max(objs, key=lambda o: _version_number(o.properties.get("version")))
+        latest.append(best)
+    return latest
 
 def build_context_from_weaviate_results(organization: str, query_text: str, category: str, document_type: str,
                     limit: int = 5, alpha: float = 0.5):
     """
     Step 1: Filter objects by metadata (category + document_type)
-    Step 2: Do near_text (vector search) only on that filtered subset
+    Step 2: Pick latest version per title
+    Step 3: Do near_text (vector search) only on those UUIDs
     """
     client = get_weaviate_client()
+
     if not client.is_connected():
         client.connect()
 
-    collection = client.collections.get(organization)
+    collection = client.collections.get("HomeCare")
 
     try:
-        # --- Step 1: Filter subset ---
-
+        # --- Step 1: Metadata filter ---
         filtered = collection.query.fetch_objects(
             filters=(
                 Filter.by_property("category").equal(category) &
-                Filter.by_property("document_type").equal(document_type) 
+                Filter.by_property("document_type").equal(document_type)
             ),
-            limit=5
+            limit=9999  # Pull all matching to handle versioning
         )
 
         if not filtered.objects:
@@ -87,50 +63,22 @@ def build_context_from_weaviate_results(organization: str, query_text: str, cate
 
         print(f"Filtered to {len(filtered.objects)} documents")
 
-        # --- Step 2: Vector search on those UUIDs only ---
-        # get UUID list
-        uuids = [str(obj.uuid) for obj in filtered.objects]  # true object UUIDs
-        print("UUIDs:", uuids)
+        # --- Step 2: Pick latest version per title ---
+        latest_objs = pick_latest_per_title(filtered.objects)
+        print(f"Selected {len(latest_objs)} latest version documents")
 
-        # make a uuid filter
-        uuid_filter = Filter.by_id().contains_any(uuids)  # <-- Filter.by_id()
-        print("UUID Filter:", uuid_filter)
+        # --- Step 3: Vector search on latest objects only ---
+        uuids = [str(obj.uuid) for obj in latest_objs]
+        uuid_filter = Filter.by_id().contains_any(uuids)
 
-        # do near_text restricted to these uuids
         vector_response = collection.query.near_text(
             query=query_text,
             filters=uuid_filter,
             # alpha=alpha,
-            limit=100,  # Increase limit to allow room for filtering
+            limit=limit,
             return_metadata=MetadataQuery(score=True)
         )
-
-        context_chunks = []
-        for obj in vector_response.objects:
-            props = obj.properties
-            uuid = obj.uuid
-            # score = obj.score
-
-            # Format all properties as key: value pairs for context
-            excluded_props = {"data"}
-            props_text = "\n".join(
-                f"{key}: {value}" 
-                for key, value in props.items() if key not in excluded_props
-            )
-            # print("properties-----------", props)
-
-            chunk = (
-                f"UUID: {uuid}\n"
-                # f"Score: {score}\n"
-                f"Properties:\n{props_text}\n"
-                "-----"
-            )
-            context_chunks.append(chunk)
-            # print("context chunk"+"-"*20)
-            # print(context_chunks)
-
-        context = "\n\n".join(context_chunks)
-        return context.strip()
+        return vector_response.objects
 
     except Exception as e:
         print(f"Query error: {e}")
@@ -203,11 +151,12 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
     messages.append({"role": "user", "content": user_content})
 
     # 🟢 GPT-4 call
-    response = openai_client.chat.completions.create(
-        model="gpt-4",
-        messages=messages,
-        temperature=0.3
-    )
+    async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            temperature=0.3
+        )
 
     answer = response.choices[0].message.content.strip()
     print("Question:", question)

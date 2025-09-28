@@ -1,9 +1,15 @@
 
-
-
+from openai import OpenAI
+import logging
+from typing import List, Dict
+import json
 import numpy as np
 from fastapi import HTTPException, UploadFile
 from app.services.extract_content import extract_content_from_pdf
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 from app.services.weaviate_client import get_weaviate_client
 
 

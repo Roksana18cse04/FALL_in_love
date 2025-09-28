@@ -106,23 +106,39 @@ async def create_schema(organization: str):
         if client.is_connected():
             client.close()
 
+async def delete_schema(organization: str):
+    print("Deleting schema...")
+    client = get_weaviate_client()
+    try:
+        if not client.is_connected():
+            client.connect()
+
+        existing = client.collections.list_all()
+        if organization not in existing:
+            print(f"{organization} schema does not exist.")
+            return {
+                "status": "not_found",
+                "message": f"Collection '{organization}' does not exist."
+            }
+
+        client.collections.delete(organization)
+        print(f"{organization} schema deleted.")
+        return {
+            "status": "deleted",
+            "message": f"Collection '{organization}' deleted successfully."
+        }
+
+    except Exception as e:
+        print(f"Error deleting {organization} schema: {e}")
+        raise e
+    finally:
+        if client.is_connected():
+            client.close()
 
 import asyncio
-
 if __name__ == "__main__":
     asyncio.run(create_schema("HomeCare"))
     print("Schema creation script executed.")
 
     # # delete the schema if needed then create_schema function will be commented
-    # print("Deleting HomeCare schema...")
-    # try:
-    #     client = get_weaviate_client()
-    #     if not client.is_connected():
-    #         print("Connecting to Weaviate...")
-    #         client.connect()
-    #     client.collections.delete("HomeCare")
-    #     print("PolicyDocuments schema deleted.")
-    # finally:
-    #     if client.is_connected():
-    #         print("Closing Weaviate connection...")
-    #         client.close()
+    
