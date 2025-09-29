@@ -121,6 +121,7 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
         "Title [IR-xxxxxx]. "
         "If the answer is not found in the context, conversation continue with your own knowledge.\n"
         "Also tell me whether your answer is coming from the provided context or your own knowledge.\n"
+        "If the user writes in English, reply in English. If the user mixes languages, reply naturally in that style.\n"
         "Return strictly in this JSON format without extra text:\n"
         "{\n"
         "  \"answer\": \"your answer here\",\n"

@@ -6,8 +6,8 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     organization: str = "HomeCare"
-    question: str = "What is the policy on data privacy?"
-    auth_token: str = "your_auth_token"
+    question: str = "Who can apply to be a registered provider under this policy?"
+    auth_token: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwODUzMTU5LCJpYXQiOjE3NTgyNjExNTksImp0aSI6ImExM2ExOGI0YWIwNTRmMWI5NDUxMDVlYmZiMTE0NTRmIiwidXNlcl9pZCI6IjcifQ.iHJDqnwOyfJDNQbwF-3kI4fH4bif-37mIElm_ZC4hxA"
 
 @router.post("/chatbot")
 async def chatbot_endpoint(request: ChatRequest):
