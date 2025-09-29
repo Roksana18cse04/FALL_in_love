@@ -90,9 +90,10 @@ Output strictly as JSON:
 }}
 3. If unsure, use "others" for either field.
 """
+
     try:
         async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
-            response = openai_client.chat.completions.create(
+            response = await openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that maps staff queries to document categories and types."},
@@ -116,8 +117,9 @@ Output strictly as JSON:
 
 
 if __name__=="__main__":
-    text = "what is privacy policy?"
-    result = predict_relevant_category_and_type(query=text)
+    import asyncio
+    text = "When will the new Aged Care Act 2024 come into effect?"
+    result = asyncio.run( predict_relevant_category_and_type(query=text) )
     print(result)
 
     # # Example Output: {'category': 'infection_prevention_control', 'document_type': 'policy'}

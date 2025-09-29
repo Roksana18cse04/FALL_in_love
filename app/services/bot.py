@@ -9,6 +9,7 @@ from app.config import OPENAI_API_KEY
 from openai import AsyncOpenAI, OpenAI
 import requests
 from collections import defaultdict
+from app.services.llm_response_correction import extract_json_from_llm
 
 BACKEND_URL = "https://jahidtestmysite.pythonanywhere.com/ai_chatbot/ChatHistory/"
 
@@ -33,7 +34,7 @@ def pick_latest_per_title(objects):
         latest.append(best)
     return latest
 
-def build_context_from_weaviate_results(organization: str, query_text: str, category: str, document_type: str,
+async def build_context_from_weaviate_results(organization: str, query_text: str, category: str, document_type: str,
                     limit: int = 5, alpha: float = 0.5):
     """
     Step 1: Filter objects by metadata (category + document_type)
@@ -45,26 +46,14 @@ def build_context_from_weaviate_results(organization: str, query_text: str, cate
     if not client.is_connected():
         client.connect()
 
-    collection = client.collections.get("HomeCare")
+    collection = client.collections.get(organization)
 
     try:
-        # --- Step 1: Metadata filter ---
-        filtered = collection.query.fetch_objects(
-            filters=(
-                Filter.by_property("category").equal(category) &
-                Filter.by_property("document_type").equal(document_type)
-            ),
-            limit=9999  # Pull all matching to handle versioning
-        )
 
-        if not filtered.objects:
-            print("No documents found matching the criteria")
-            return []
+        results = collection.query.fetch_objects()
+        latest_objs = pick_latest_per_title(results.objects)
 
-        print(f"Filtered to {len(filtered.objects)} documents")
 
-        # --- Step 2: Pick latest version per title ---
-        latest_objs = pick_latest_per_title(filtered.objects)
         print(f"Selected {len(latest_objs)} latest version documents")
 
         # --- Step 3: Vector search on latest objects only ---
@@ -78,6 +67,9 @@ def build_context_from_weaviate_results(organization: str, query_text: str, cate
             limit=limit,
             return_metadata=MetadataQuery(score=True)
         )
+        if not vector_response:
+            print("No documents found matching the criteria")
+            return []
         return vector_response.objects
 
     except Exception as e:
@@ -108,41 +100,36 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
             chat_history.append({"role": "user", "content": h['prompt']})
             chat_history.append({"role": "assistant", "content": h['response']})
 
-    # 🟢 classify question
-    classify_response = predict_relevant_category_and_type(question)
-    category = classify_response.get("category")
-    document_type = classify_response.get("document_type")
-    is_doc_related = classify_response.get("is_document_related", False)
-    classify_used_tokens = classify_response.get("used_tokens")
-
-    # 🟢 context fetch only if doc-related
     context = ""
-    if is_doc_related and category and document_type:
-        context = build_context_from_weaviate_results(
-            organization=organization,
-            query_text=question,
-            category=category,
-            document_type=document_type
-        )
-    else:
-        context = ""  # no context when not document related
 
-    # 🟢 system prompt
+    context = await build_context_from_weaviate_results(
+        organization=organization,
+        query_text=question,
+        category="",
+        document_type=""
+    )
+
+    # system prompt
     system_prompt = (
         "You are a helpful assistant. "
         "If context is provided, answer based on it. "
         "If no relevant context is provided, answer from your general knowledge.\n"
-        "Each document excerpt includes metadata: Title, Source, Created At, Last Update, document_id.\n"
+        "Each document excerpt includes metadata: Title, Source, Created At, Last Update, document_id and summary.\n"
         "When referencing a document, always include the document_id next to the title in this format: "
         "Title [IR-xxxxxx]. "
-        "If the answer is not found in the context, say 'I'm sorry, but without a specific document or context, I can't provide a specific privacy policy. However, in general terms,' and then continue with your own knowledge.\n"
+        "If the answer is not found in the context, conversation continue with your own knowledge.\n"
+        "Also tell me whether your answer is coming from the provided context or your own knowledge.\n"
+        "Return strictly in this JSON format without extra text:\n"
+        "{\n"
+        "  \"answer\": \"your answer here\",\n"
+        "  \"used_document\": true_or_false,\n"
+        "}"
     )
 
-    # 🟢 build messages
+    # build messages
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_history)
 
-    # এখানে context থাকলে সেটাও যোগ করো
     if context:
         user_content = f"Context:\n{context}\n\nQuestion: {question}"
     else:
@@ -150,21 +137,27 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
 
     messages.append({"role": "user", "content": user_content})
 
-    # 🟢 GPT-4 call
+    # GPT-4 call
     async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
         response = await openai_client.chat.completions.create(
             model="gpt-4",
             messages=messages,
             temperature=0.3
         )
+    used_tokens = response.usage.total_tokens
 
     answer = response.choices[0].message.content.strip()
-    print("Question:", question)
-    print("Answer:", answer)
-    used_tokens = response.usage.total_tokens + classify_used_tokens
+    json_answer = extract_json_from_llm(answer)
 
-    # 🟢 save history
-    history_payload = {"prompt": question, "response": answer, "used_tokens": used_tokens}
+    # to read count , find out document_title of llm find answer from context
+    if json_answer['used_document']:
+        first_doc = context[0]
+        document_title = first_doc.properties.get("title", "")
+        print("used document:", document_title)
+        print("-"*80)
+
+    # save history
+    history_payload = {"prompt": question, "response": json_answer['answer'], "used_tokens": used_tokens}
     res = requests.post(BACKEND_URL, json=history_payload, headers=header)
 
     if res.status_code != 201:
@@ -176,7 +169,7 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
     return JSONResponse(status_code=200, content={
         "status": "success",
         "question": question,
-        "answer": answer,
+        "answer": json_answer['answer'],
         "used_tokens": used_tokens
     })
 
@@ -187,6 +180,6 @@ import json
 if __name__ == "__main__":
     token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDczNzk5LCJpYXQiOjE3NTc0ODE3OTksImp0aSI6ImM4NjAzNjU1NmNkZjQwZjdiYzFhYzc5MWE3NWU3MjAwIiwidXNlcl9pZCI6IjcifQ.Q0_AwIaCzvTfTi17XngEbmBBlJOx-An3HkQRetnM3Xg" 
     org = "HomeCare"
-    q = "What is the privacy policy? in short"
+    q = "Who can apply to be a registered provider under this policy?"
     response = asyncio.run(ask_doc_bot(q, org, token))
     print(json.loads(response.body))
