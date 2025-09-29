@@ -67,7 +67,7 @@ def compute_global_next_version(collection) -> str:
     except Exception:
         return "v1"
 
-@router.post("/admin/upload-policy-pdf")
+@router.post("/admin/upload-law")
 async def upload_policy_pdf(file: UploadFile = File(...)):
     # Extract text from PDF
     text, title = await extract_content_from_pdf(file)

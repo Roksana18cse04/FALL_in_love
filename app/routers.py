@@ -12,7 +12,15 @@ from app.services.classification import classify_category
 from app.services.summarize_pdf import summarize_with_gpt4
 from app.services.extract_content import extract_content_from_pdf
 
+# Import policy generation routes
+from app.routes.simple_policy_generate import router as simple_policy_router
+from app.routes.policy_generate import router as policy_generate_router
+
 router = APIRouter()
+
+# Include policy generation routes
+router.include_router(simple_policy_router)
+router.include_router(policy_generate_router)
 
 
 # Define a request model for structured input

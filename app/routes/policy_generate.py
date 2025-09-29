@@ -1,22 +1,32 @@
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from app.services.policy_llm import generate_policy_json
+from app.services.policy_llm import generate_policy_with_vector_laws
 
 router = APIRouter()
 
 class PolicyRequest(BaseModel):
+    title: str
     context: str
-    super_admin_law: str
 
 @router.post("/generate-policy")
 async def generate_policy_endpoint(request: PolicyRequest):
-    policy_json = await generate_policy_json(request.context, request.super_admin_law)
+    """
+    Generate policy using super admin laws from Weaviate vector database.
+    Automatically retrieves latest version laws and generates policy with strict adherence.
+    """
     try:
-        # Try to parse as JSON
-        import json
-        return JSONResponse(content=json.loads(policy_json))
-    except Exception:
-        # If not valid JSON, return as plain text
-        return JSONResponse(content={"policy": policy_json})
+        result = await generate_policy_with_vector_laws(
+            title=request.title,
+            context=request.context,
+            version=None  # Use latest version
+        )
+        
+        if result["status"] == "error":
+            raise HTTPException(status_code=400, detail=result["message"])
+        
+        return JSONResponse(content=result)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating policy: {str(e)}")
