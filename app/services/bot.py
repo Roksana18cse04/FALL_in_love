@@ -2,16 +2,15 @@ from urllib import response
 import openai
 from app.services.weaviate_client import get_weaviate_client
 from weaviate.classes.query import Filter, MetadataQuery
-from app.services.classification import predict_relevant_category_and_type
 from weaviate.classes.query import MetadataQuery
 from fastapi.responses import JSONResponse
-from app.config import OPENAI_API_KEY
-from openai import AsyncOpenAI, OpenAI
+from app.config import OPENAI_API_KEY, BACKEND_HISTORY_URL, BACKEND_DOC_READ_COUNT_URL
+from openai import AsyncOpenAI
 import requests
 from collections import defaultdict
 from app.services.llm_response_correction import extract_json_from_llm
-
-BACKEND_URL = "https://jahidtestmysite.pythonanywhere.com/ai_chatbot/ChatHistory/"
+from app.services.store_used_token import used_token_store
+    
 
 def _version_number(v):
     """Convert version string like 'v2' or '2' to int for sorting."""
@@ -82,10 +81,12 @@ async def build_context_from_weaviate_results(organization: str, query_text: str
 
 async def ask_doc_bot(question: str, organization: str, auth_token: str):
     header = {"Authorization": f"Bearer {auth_token}"}
-    history_res = requests.get(BACKEND_URL, headers=header)
-
+    history_res = requests.get(BACKEND_HISTORY_URL, headers=header)
+    
     chat_history = []
     if history_res.status_code == 200:
+        print("history get successfully--------")
+
         data = history_res.json()['data']
         remaining_tokens = data.get('remaining_tokens', None)
         histories = data.get('histories', [])[:10]
@@ -108,6 +109,7 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
         category="",
         document_type=""
     )
+    # print("context-------\n", context)
 
     # system prompt
     system_prompt = (
@@ -151,21 +153,47 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
 
     # to read count , find out document_title of llm find answer from context
     if json_answer['used_document']:
-        first_doc = context[0]
-        document_title = first_doc.properties.get("title", "")
-        print("used document:", document_title)
-        print("-"*80)
+        document_id_list = {}
+        for c in context:
+            id = c.properties.get("document_id", "")
+            document_id_list[id] = 1
+        print("document id list--\n", document_id_list)
+        # save document read count
+        readCount_payload = document_id_list
+        readCount_response = requests.post(BACKEND_DOC_READ_COUNT_URL, json=readCount_payload, headers=header)
+        if readCount_response.status_code != 201:
+            return JSONResponse(status_code=500, content={
+                "status": "error",
+                "message": "Failed to save reaad count data"
+                
+            })
+        else: print("save read count data successfully!")
 
     # save history
-    history_payload = {"prompt": question, "response": json_answer['answer'], "used_tokens": used_tokens}
-    res = requests.post(BACKEND_URL, json=history_payload, headers=header)
-
+    history_payload = {
+        "prompt": question, 
+        "response": json_answer['answer'], 
+        "used_tokens": used_tokens
+    }
+    res = requests.post(BACKEND_HISTORY_URL, json=history_payload, headers=header)
     if res.status_code != 201:
         return JSONResponse(status_code=500, content={
             "status": "error",
-            "message": "Failed to save chat history."
+            "message": "Failed to save chat history.",
+            
         })
-
+    else: print("save history data successfully!")
+    
+    # save token count
+    token_response = used_token_store(type= 'chatbot', used_tokens=used_tokens, auth_token=auth_token)
+    if token_response.status_code != 201:
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "message": "Failed to save chatbot used token.",
+            
+        })
+    
+    # finally return 
     return JSONResponse(status_code=200, content={
         "status": "success",
         "question": question,
@@ -178,8 +206,8 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
 import asyncio
 import json
 if __name__ == "__main__":
-    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDczNzk5LCJpYXQiOjE3NTc0ODE3OTksImp0aSI6ImM4NjAzNjU1NmNkZjQwZjdiYzFhYzc5MWE3NWU3MjAwIiwidXNlcl9pZCI6IjcifQ.Q0_AwIaCzvTfTi17XngEbmBBlJOx-An3HkQRetnM3Xg" 
+    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwODUzMTU5LCJpYXQiOjE3NTgyNjExNTksImp0aSI6ImExM2ExOGI0YWIwNTRmMWI5NDUxMDVlYmZiMTE0NTRmIiwidXNlcl9pZCI6IjcifQ.iHJDqnwOyfJDNQbwF-3kI4fH4bif-37mIElm_ZC4hxA" 
     org = "HomeCare"
     q = "Who can apply to be a registered provider under this policy?"
     response = asyncio.run(ask_doc_bot(q, org, token))
-    print(json.loads(response.body))
+    print("print from bot main function: \n", json.loads(response.body))
