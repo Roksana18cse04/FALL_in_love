@@ -29,8 +29,7 @@ app = FastAPI(lifespan=lifespan)
 # Allow frontend CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # or ["http://localhost:3000"] for React
-    allow_credentials=True,
+    allow_origins=["*"], 
     allow_methods=["*"],
     allow_headers=["*"],
 )
