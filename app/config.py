@@ -13,3 +13,8 @@ DROPBOX_REFRESH_TOKEN = os.getenv("DROPBOX_REFRESH_TOKEN")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+BASE_URL = "https://jahidtestmysite.pythonanywhere.com"
+BACKEND_HISTORY_URL = f"{BASE_URL}/ai/ChatHistory/"
+BACKEND_TOKEN_COUNT_URL = f"{BASE_URL}/ai/TokenCount/"
+BACKEND_DOC_READ_COUNT_URL = f"{BASE_URL}/documents/Count/"
+ 
