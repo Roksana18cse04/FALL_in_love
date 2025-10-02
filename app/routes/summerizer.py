@@ -3,16 +3,21 @@ from app.services.summarize_pdf import summarize_with_gpt4
 from app.services.extract_content import extract_content_from_pdf
 from app.services.classification import classify_category
 from app.services.store_used_token import used_token_store
+from app.services.s3_manager import S3Manager
 from fastapi.responses import JSONResponse
 
 router = APIRouter()
 
+s3_manager = S3Manager()
+
 @router.post("/summary-with-category")
-async def get_summary_and_category_endpoint(auth_token:str, file: UploadFile = File(...)):
+async def get_summary_and_category_endpoint(auth_token:str, type: str, file: UploadFile = File(...)):
     # Implement your summary logic here
     try:
         text, title = await extract_content_from_pdf(file)
+        print("-----------successfully extracted content")
         response = await summarize_with_gpt4(text, title)
+        print("------------successfully summarized document")
         summary = response['summary']
         if not summary or summary.strip() == "":
             return {f"error": "Failed to generate summary from GPT-4: " + response['message']}
@@ -36,14 +41,21 @@ async def get_summary_and_category_endpoint(auth_token:str, file: UploadFile = F
         })
 
         # upload to cloud storage
-        # get url link
-
-        return {
-            "summary": summary,
-            "category": category,
-            # "url": url
-            "used_tokens": total_used_tokens  
-        }
+        upload_response = s3_manager.upload_document(file, category, type)
+        if upload_response:
+            return {
+                "summary": summary,
+                "category": category,
+                "used_tokens": total_used_tokens,
+                "aws_object_key": upload_response['object_key'],
+                "aws_version_id": upload_response['version_id'] 
+            }
+        else:
+            print('File Uploaded Failed')
+            return JSONResponse(status_code=500, content={
+                "status": "error",
+                "message": "File upload failed."
+            })
 
     except Exception as e:
         return {"error": str(e)}

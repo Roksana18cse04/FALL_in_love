@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 import json
 from app.services.weaviate_client import get_weaviate_client
-from app.services.extract_content import extract_content_from_url
-from app.services.dropbox_operation import upload_pdf_to_dropbox, delete_file
-from app.services.summarize_pdf import summarize_with_gpt4
+from app.services.extract_content import extract_content_from_pdf
+from app.services.s3_manager import S3Manager
 from fastapi.responses import JSONResponse
 from uuid import uuid5, NAMESPACE_URL
+
+s3 = S3Manager()
 
 def chunk_text(text, max_chars=7000):
     """Split text into chunks without cutting sentences mid-way."""
@@ -56,13 +57,21 @@ async def get_next_version(client, collection_name, title):
     except Exception as e:
         print(f"Error getting next version: {str(e)}")
         return "v1"
-        
+     
 
-async def weaviate_insertion(organization, doc_db_id, document_type, document_url, summary, category="aged care"):
+async def weaviate_insertion(organization, doc_db_id, document_type, document_object_key, summary, category="aged care"):
     client = get_weaviate_client()
     try:
-        # Extract content from URL
-        data, title = await extract_content_from_url(document_url)
+        # download file from s3
+        temp_file_path = s3.download_document(document_object_key)
+        if not temp_file_path:
+            return JSONResponse(status_code=404, content={
+                "status": "error",
+                "message": f"Failed to download file"
+            })
+        
+        # Extract content from pdf
+        data, title = await extract_content_from_pdf(temp_file_path)
 
         # Ensure the client is connected
         if not client.is_connected():
@@ -81,7 +90,7 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ur
         chunks = chunk_text(data)
 
         version = await get_next_version(client, organization, title)
-        document_id = uuid5(NAMESPACE_URL, f"{document_url}-{version}")
+        document_id = uuid5(NAMESPACE_URL, f"{document_object_key}-{version}")
 
         # Insert chunks
         for idx, chunk in enumerate(chunks):
@@ -93,7 +102,7 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ur
                     "title": title,
                     "summary": summary,
                     "category": category,
-                    "source": document_url,
+                    "source": document_object_key,
                     "version": version,
                     "data": chunk,
                     "created_at": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
@@ -106,7 +115,7 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ur
             "status": "success",
             "message": f"Document '{title}' inserted successfully with version {version}.",
             "organization": organization,
-            "source": document_url,
+            "source": document_object_key,
             "document_id": str(doc_db_id)
         })
         
@@ -124,7 +133,7 @@ if __name__ == "__main__":
         organization="HomeCare",
         doc_db_id=123,
         document_type="policy",
-        document_url="https://www.dropbox.com/scl/fi/i4js5sapbbihzkbejonzy/provider-registration-policy.pdf?rlkey=2egqmz4na3g5v44w3976lpgo2&st=vicm51sf&dl=1",
+        document_object_key="AI/policy/privacy_confidentiality_information_governance/provider-registration-policy.pdf",
         summary="This is a sample summary of the policy document.",
         category="privacy_confidentiality_information_governance",
     ))
