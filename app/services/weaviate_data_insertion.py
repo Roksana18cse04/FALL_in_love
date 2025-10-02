@@ -5,6 +5,7 @@ from app.services.extract_content import extract_content_from_pdf
 from app.services.s3_manager import S3Manager
 from fastapi.responses import JSONResponse
 from uuid import uuid5, NAMESPACE_URL
+import os
 
 s3 = S3Manager()
 
@@ -111,6 +112,8 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ob
                 uuid=str(chunk_uuid)
             )
         print(f"Document '{title}' inserted successfully with version {version} into class '{organization}'")
+        
+        os.remove(temp_file_path)
         return JSONResponse(status_code=201, content={
             "status": "success",
             "message": f"Document '{title}' inserted successfully with version {version}.",
