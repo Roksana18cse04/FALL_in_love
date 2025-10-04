@@ -1,7 +1,9 @@
 from app.services.weaviate_client import get_weaviate_client
 from weaviate.classes.query import Filter
+from app.services.s3_manager import S3Manager
 
-async def delete_weaviate_data(organization: str, category: str, document_type: str, filename: str, version: str):
+
+async def delete_weaviate_data(organization: str, category: str, document_type: str, filename: str, db_version: str, s3version_id: str):
     client = get_weaviate_client()
     try:
         if not client.is_connected():
@@ -14,17 +16,20 @@ async def delete_weaviate_data(organization: str, category: str, document_type: 
             Filter.by_property("category").equal(category) &
             Filter.by_property("document_type").equal(document_type) &
             Filter.by_property("title").equal(filename) &
-            Filter.by_property("version").equal(version)
+            Filter.by_property("version").equal(db_version)
         )
 
         # Fetch matching objects
         collection.data.delete_many(
             where=metadata_filter
         )
+        s3 = S3Manager()
+        object_key = f"AI/{document_type}/{category}/{filename}"
+        s3.delete_document(s3version_id, object_key)
 
         return {
             "status": "success",
-            "message": f"Deleted document(s) with title '{filename}' and version '{version}'."
+            "message": f"Deleted document(s) with title '{filename}' and version '{db_version}'."
         }
     
     except Exception as e:

@@ -5,7 +5,9 @@ async def extract_content_from_pdf(file):
     text = ""
     # Check if 'file' is UploadFile or a path string
     pdf_bytes = file
-    title = file.split("/")[-1].replace(".pdf", "")
+    # title = file.split("/")[-1].replace(".pdf", "")
+    title = file.filename
+    print(f'summerizing the {title}...........')
     
     try:
         # Open pdf
