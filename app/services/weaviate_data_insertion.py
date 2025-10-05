@@ -51,8 +51,9 @@ async def get_next_version(client, collection_name, title):
         
         if not versions:
             return "v1"
-        
+        print("exiting version ---------", max(versions))
         next_version = max(versions) + 1
+        print("next version -------------", next_version)
         return f"v{next_version}"
         
     except Exception as e:
@@ -73,6 +74,7 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ob
         
         # Extract content from pdf
         data, title = await extract_content_from_pdf(temp_file_path)
+        print("docs title--------------", title)
 
         # Ensure the client is connected
         if not client.is_connected():

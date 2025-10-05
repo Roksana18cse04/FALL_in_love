@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File
 from app.services.summarize_pdf import summarize_with_gpt4
-from app.services.extract_content import extract_content_from_pdf
+from app.services.extract_content import extract_content_from_uploadpdf
 from app.services.classification import classify_category
 from app.services.store_used_token import used_token_store
 from app.services.s3_manager import S3Manager
@@ -14,7 +14,7 @@ s3_manager = S3Manager()
 async def get_summary_and_category_endpoint(auth_token:str, type: str, file: UploadFile = File(...)):
     # Implement your summary logic here
     try:
-        text, title = await extract_content_from_pdf(file)
+        text, title = await extract_content_from_uploadpdf(file)
         print("-----------successfully extracted content")
         response = await summarize_with_gpt4(text, title)
         print("------------successfully summarized document")

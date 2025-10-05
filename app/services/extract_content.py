@@ -1,22 +1,49 @@
 import pdfplumber
-import io
+import os
+from fastapi import UploadFile
 
-async def extract_content_from_pdf(file):
+async def extract_content_from_pdf(file_path: str):
     text = ""
-    # Check if 'file' is UploadFile or a path string
-    pdf_bytes = file
-    # title = file.split("/")[-1].replace(".pdf", "")
-    title = file.filename
-    print(f'summerizing the {title}...........')
-    
+    title = os.path.basename(file_path)
+    print(f"Summarizing the {title}...........")
+
     try:
-        # Open pdf
-        with pdfplumber.open(pdf_bytes) as pdf:
+        # Open PDF with pdfplumber
+        with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
+
         return text.strip(), title
+
+    except Exception as e:
+        print(f"Error extracting PDF content: {str(e)}")
+        return "", title
+
+async def extract_content_from_uploadpdf(file: UploadFile):
+    """
+    Extract text content from an uploaded PDF file.
+    Works directly with FastAPI's UploadFile.
+    """
+    text = ""
+    title = file.filename
+    print(f"Summarizing the {title}...........")
+
+    try:
+        # Read file bytes
+        file_bytes = await file.read()
+
+        # Use pdfplumber to read from memory
+        from io import BytesIO
+        with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+
+        return text.strip(), title
+
     except Exception as e:
         print(f"Error extracting PDF content: {str(e)}")
         return "", title

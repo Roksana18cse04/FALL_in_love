@@ -152,6 +152,19 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
     answer = response.choices[0].message.content.strip()
     json_answer = extract_json_from_llm(answer)
 
+    # Ensure we have a dict
+    if isinstance(json_answer, str):
+        try:
+            # Try parsing as JSON
+            json_answer = json.loads(json_answer.replace("'", '"'))  # Replace single quotes
+        except Exception:
+            # If it still fails, wrap plain text into dict
+            json_answer = {
+                "answer": json_answer,
+                "used_document": False
+            }
+    print('bot answr after llm parser------------\n', json_answer)
+
     # to read count , find out document_title of llm find answer from context
     if json_answer['used_document']:
         document_id_list = {}
@@ -162,10 +175,11 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
         # save document read count
         readCount_payload = document_id_list
         readCount_response = requests.post(BACKEND_DOC_READ_COUNT_URL, json=readCount_payload, headers=header)
+        print("readcount response -------------", readCount_response)
         if readCount_response.status_code != 201:
             return JSONResponse(status_code=500, content={
                 "status": "error",
-                "message": "Failed to save reaad count data"
+                "message": "Failed to save read count data"
                 
             })
         else: print("save read count data successfully!")

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 class Document(BaseModel):
     organization: str = "HomeCare"
-    doc_db_id: str = "123"
+    doc_db_id: str = "6"
     document_type: str = "policy"
     document_object_key: str = "AI/policy/privacy_confidentiality_information_governance/provider-registration-policy.pdf"
     summary: str = "This is a sample summary of the policy document."
