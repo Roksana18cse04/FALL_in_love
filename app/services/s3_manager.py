@@ -128,8 +128,9 @@ class S3Manager:
             logger.error(f"Error listing versions: {e}")
             return []
         
-    def download_document(self, object_key, download_path='temp_document.pdf'):
+    def download_document(self, object_key):
         try:
+            download_path = os.path.basename(object_key)
             self.s3_client.download_file(self.bucket_name, object_key, download_path)
             print(f"Downloaded successfully: {download_path}")
             return download_path  # explicitly return

@@ -51,7 +51,8 @@ async def get_next_version(client, collection_name, title):
         
         if not versions:
             return "v1"
-        print("exiting version ---------", max(versions))
+        
+        print("all version version ---------", versions)
         next_version = max(versions) + 1
         print("next version -------------", next_version)
         return f"v{next_version}"
@@ -66,6 +67,7 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ob
     try:
         # download file from s3
         temp_file_path = s3.download_document(document_object_key)
+        print("temp file path------------", temp_file_path)
         if not temp_file_path:
             return JSONResponse(status_code=404, content={
                 "status": "error",
@@ -93,7 +95,9 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ob
         chunks = chunk_text(data)
 
         version = await get_next_version(client, organization, title)
+        print("current version -----------", version)
         document_id = uuid5(NAMESPACE_URL, f"{document_object_key}-{version}")
+        print("current document id ---------------", document_id)
 
         # Insert chunks
         for idx, chunk in enumerate(chunks):
