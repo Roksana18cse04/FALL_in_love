@@ -1,16 +1,17 @@
+import asyncio
+import aiohttp
 from urllib import response
 import openai
 from app.services.weaviate_client import get_weaviate_client
 from weaviate.classes.query import Filter, MetadataQuery
-from weaviate.classes.query import MetadataQuery
 from fastapi.responses import JSONResponse
 from app.config import OPENAI_API_KEY, BACKEND_HISTORY_URL, BACKEND_DOC_READ_COUNT_URL
 from openai import AsyncOpenAI
-import requests
 from collections import defaultdict
 from app.services.llm_response_correction import extract_json_from_llm
 from app.services.store_used_token import used_token_store
-    
+import json
+
 
 def _version_number(v):
     """Convert version string like 'v2' or '2' to int for sorting."""
@@ -20,7 +21,8 @@ def _version_number(v):
         return int(v)
     except (ValueError, TypeError):
         return 1
-    
+
+
 def pick_latest_per_title(objects):
     grouped = defaultdict(list)
     for obj in objects:
@@ -33,8 +35,10 @@ def pick_latest_per_title(objects):
         latest.append(best)
     return latest
 
-async def build_context_from_weaviate_results(organization: str, query_text: str, category: str, document_type: str,
-                    limit: int = 5, alpha: float = 0.5):
+
+async def build_context_from_weaviate_results(organization: str, query_text: str, 
+                                              category: str = "", document_type: str = "",
+                                              limit: int = 5, alpha: float = 0.5):
     """
     Step 1: Filter objects by metadata (category + document_type)
     Step 2: Pick latest version per title
@@ -48,21 +52,18 @@ async def build_context_from_weaviate_results(organization: str, query_text: str
     collection = client.collections.get(organization)
 
     try:
-
         results = collection.query.fetch_objects()
         latest_objs = pick_latest_per_title(results.objects)
 
-
         print(f"Selected {len(latest_objs)} latest version documents")
 
-        # --- Step 3: Vector search on latest objects only ---
+        # Vector search on latest objects only
         uuids = [str(obj.uuid) for obj in latest_objs]
         uuid_filter = Filter.by_id().contains_any(uuids)
 
         vector_response = collection.query.near_text(
             query=query_text,
             filters=uuid_filter,
-            # alpha=alpha,
             limit=limit,
             return_metadata=MetadataQuery(score=True)
         )
@@ -74,45 +75,129 @@ async def build_context_from_weaviate_results(organization: str, query_text: str
     except Exception as e:
         print(f"Query error: {e}")
         return []
-    
     finally:
         if client.is_connected():
             client.close()
 
-async def ask_doc_bot(question: str, organization: str, auth_token: str):
+
+async def fetch_history_async(auth_token: str):
+    """Async function to fetch chat history"""
     header = {"Authorization": f"Bearer {auth_token}"}
-    history_res = requests.get(BACKEND_HISTORY_URL, headers=header)
     
-    chat_history = []
-    if history_res.status_code == 200:
-        print("history get successfully--------")
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(BACKEND_HISTORY_URL, headers=header) as response:
+                if response.status == 200:
+                    print("History get successfully--------")
+                    data = await response.json()
+                    return {
+                        "success": True,
+                        "remaining_tokens": data['data'].get('remaining_tokens', None),
+                        "histories": data['data'].get('histories', [])[:10]
+                    }
+                else:
+                    print(f"History get failed: {response.status}")
+                    return {"success": False, "remaining_tokens": None, "histories": []}
+        except Exception as e:
+            print(f"Error fetching history: {e}")
+            return {"success": False, "remaining_tokens": None, "histories": []}
 
-        data = history_res.json()['data']
-        remaining_tokens = data.get('remaining_tokens', None)
-        histories = data.get('histories', [])[:10]
 
-        if remaining_tokens is not None and remaining_tokens < 1000:
-            return JSONResponse(status_code=400, content={
-                "status": "error",
-                "message": "Insufficient tokens to continue the conversation."
-            })
+async def save_data_parallel(history_data: dict, readcount_data: dict, 
+                            token_data: dict, auth_token: str):
+    """Save history, read count, and token data in parallel"""
+    header = {"Authorization": f"Bearer {auth_token}"}
+    
+    async def post_history():
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(BACKEND_HISTORY_URL, json=history_data, 
+                                       headers=header) as response:
+                    return {"type": "history", "status": response.status}
+            except Exception as e:
+                print(f"Error saving history: {e}")
+                return {"type": "history", "status": 500, "error": str(e)}
+    
+    async def post_readcount():
+        if not readcount_data:
+            return {"type": "readcount", "status": 200, "skipped": True}
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(BACKEND_DOC_READ_COUNT_URL, json=readcount_data,
+                                       headers=header) as response:
+                    return {"type": "readcount", "status": response.status}
+            except Exception as e:
+                print(f"Error saving read count: {e}")
+                return {"type": "readcount", "status": 500, "error": str(e)}
+    
+    async def post_token():
+        # Convert sync function to async - you may need to modify this based on your implementation
+        try:
+            # If used_token_store is sync, wrap it
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, 
+                lambda: used_token_store(
+                    type='chatbot', 
+                    used_tokens=token_data['used_tokens'], 
+                    auth_token=auth_token
+                )
+            )
+            return {"type": "token", "status": response.status_code}
+        except Exception as e:
+            print(f"Error saving token: {e}")
+            return {"type": "token", "status": 500, "error": str(e)}
+    
+    # Execute all three POST requests in parallel
+    results = await asyncio.gather(
+        post_history(),
+        post_readcount(),
+        post_token(),
+        return_exceptions=True
+    )
+    
+    return results
 
-        for h in histories:
-            chat_history.append({"role": "user", "content": h['prompt']})
-            chat_history.append({"role": "assistant", "content": h['response']})
-    else: print("history get failed-----------")
 
-    context = ""
-
-    context = await build_context_from_weaviate_results(
+async def ask_doc_bot(question: str, organization: str, auth_token: str):
+    """
+    Optimized version with parallel execution:
+    - Fetch history and build context in parallel
+    - Save all data (history, readcount, token) in parallel
+    """
+    
+    # ============ STEP 1: PARALLEL FETCH (History + Context) ============
+    print("⏱️ Starting parallel fetch...")
+    start_time = asyncio.get_event_loop().time()
+    
+    history_task = fetch_history_async(auth_token)
+    context_task = build_context_from_weaviate_results(
         organization=organization,
         query_text=question,
         category="",
         document_type=""
     )
-    # print("context-------\n", context)
-
-    # system prompt
+    
+    # Wait for both to complete
+    history_result, context = await asyncio.gather(history_task, context_task)
+    
+    fetch_time = asyncio.get_event_loop().time() - start_time
+    print(f"✅ Parallel fetch completed in {fetch_time:.2f}s")
+    
+    # Check token limit
+    if history_result['remaining_tokens'] is not None and history_result['remaining_tokens'] < 1000:
+        return JSONResponse(status_code=400, content={
+            "status": "error",
+            "message": "Insufficient tokens to continue the conversation."
+        })
+    
+    # Build chat history
+    chat_history = []
+    for h in history_result['histories']:
+        chat_history.append({"role": "user", "content": h['prompt']})
+        chat_history.append({"role": "assistant", "content": h['response']})
+    
+    # ============ STEP 2: LLM CALL ============
     system_prompt = (
         "You are Nestor AI, a smart, friendly, and compassionate digital assistant specifically designed to support senior citizens. "
         "Your primary mission is to help older adults navigate policies, services, benefits, and general information questions with clarity and empathy.\n\n"
@@ -147,101 +232,131 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
         "- Provide complete, helpful answers that directly address the user's question.\n"
         "- When appropriate, offer additional relevant information that might be helpful.\n"
     )
-
-    # build messages
+    
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_history)
-
+    
     if context:
         user_content = f"Context:\n{context}\n\nQuestion: {question}"
     else:
         user_content = f"Question: {question}"
-
+    
     messages.append({"role": "user", "content": user_content})
-
+    
     # GPT-4 call
+    print("⏱️ Starting LLM call...")
+    llm_start = asyncio.get_event_loop().time()
+    
     async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
         response = await openai_client.chat.completions.create(
             model="gpt-4",
             messages=messages,
             temperature=0.3
         )
+    
+    llm_time = asyncio.get_event_loop().time() - llm_start
+    print(f"✅ LLM call completed in {llm_time:.2f}s")
+    
     used_tokens = response.usage.total_tokens
-
     answer = response.choices[0].message.content.strip()
     json_answer = extract_json_from_llm(answer)
-
+    
     # Ensure we have a dict
     if isinstance(json_answer, str):
         try:
-            # Try parsing as JSON
-            json_answer = json.loads(json_answer.replace("'", '"'))  # Replace single quotes
+            json_answer = json.loads(json_answer.replace("'", '"'))
         except Exception:
-            # If it still fails, wrap plain text into dict
             json_answer = {
                 "answer": json_answer,
                 "used_document": False
             }
-    print('bot answr after llm parser------------\n', json_answer)
-
-    # to read count , find out document_title of llm find answer from context
-    if json_answer['used_document']:
-        document_id_list = {}
+    
+    print('Bot answer after LLM parser------------\n', json_answer)
+    
+    # ============ STEP 3: PARALLEL SAVE (History + ReadCount + Token) ============
+    print("⏱️ Starting parallel save...")
+    save_start = asyncio.get_event_loop().time()
+    
+    # Prepare read count data
+    readcount_data = {}
+    if json_answer['used_document'] and context:
         for c in context:
-            id = c.properties.get("document_id", "")
-            document_id_list[id] = 1
-        print("document id list--\n", document_id_list)
-        # save document read count
-        readCount_payload = document_id_list
-        readCount_response = requests.post(BACKEND_DOC_READ_COUNT_URL, json=readCount_payload, headers=header)
-        print("readcount response -------------", readCount_response)
-        if readCount_response.status_code != 201:
-            return JSONResponse(status_code=500, content={
-                "status": "error",
-                "message": "Failed to save read count data"
-                
-            })
-        else: print("save read count data successfully!")
-
-    # save history
-    history_payload = {
-        "prompt": question, 
-        "response": json_answer['answer'], 
+            doc_id = c.properties.get("document_id", "")
+            readcount_data[doc_id] = 1
+        print("Document ID list--\n", readcount_data)
+    
+    # Prepare data for parallel save
+    history_data = {
+        "prompt": question,
+        "response": json_answer['answer'],
         "used_tokens": used_tokens
     }
-    res = requests.post(BACKEND_HISTORY_URL, json=history_payload, headers=header)
-    if res.status_code != 201:
-        return JSONResponse(status_code=500, content={
-            "status": "error",
-            "message": "Failed to save chat history.",
-            
-        })
-    else: print("save history data successfully!")
     
-    # save token count
-    token_response = used_token_store(type= 'chatbot', used_tokens=used_tokens, auth_token=auth_token)
-    if token_response.status_code != 201:
-        return JSONResponse(status_code=500, content={
-            "status": "error",
-            "message": "Failed to save chatbot used token.",
-            
-        })
+    token_data = {
+        "used_tokens": used_tokens
+    }
     
-    # finally return 
+    # Save all in parallel
+    save_results = await save_data_parallel(
+        history_data, 
+        readcount_data, 
+        token_data, 
+        auth_token
+    )
+    
+    save_time = asyncio.get_event_loop().time() - save_start
+    print(f"✅ Parallel save completed in {save_time:.2f}s")
+    
+    # Check for errors
+    for result in save_results:
+        if isinstance(result, dict):
+            if result['status'] not in [200, 201] and not result.get('skipped'):
+                print(f"⚠️ Warning: {result['type']} save failed with status {result['status']}")
+                # Don't return error, just log it - user still gets their answer
+    
+    total_time = asyncio.get_event_loop().time() - start_time
+    print(f"🎯 Total request time: {total_time:.2f}s")
+    
+    # Finally return
     return JSONResponse(status_code=200, content={
         "status": "success",
         "question": question,
         "answer": json_answer['answer'],
-        "used_tokens": used_tokens
+        "used_tokens": used_tokens,
+        "performance": {
+            "fetch_time": f"{fetch_time:.2f}s",
+            "llm_time": f"{llm_time:.2f}s",
+            "save_time": f"{save_time:.2f}s",
+            "total_time": f"{total_time:.2f}s"
+        }
     })
 
 
-
-import asyncio
-import json
+# Test function
 if __name__ == "__main__":
-    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwODUzMTU5LCJpYXQiOjE3NTgyNjExNTksImp0aSI6ImExM2ExOGI0YWIwNTRmMWI5NDUxMDVlYmZiMTE0NTRmIiwidXNlcl9pZCI6IjcifQ.iHJDqnwOyfJDNQbwF-3kI4fH4bif-37mIElm_ZC4hxA" 
+    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwODUzMTU5LCJpYXQiOjE3NTgyNjExNTksImp0aSI6ImExM2ExOGI0YWIwNTRmMWI5NDUxMDVlYmZiMTE0NTRmIiwidXNlcl9pZCI6IjcifQ.iHJDqnwOyfJDNQbwF-3kI4fH4bif-37mIElm_ZC4hxA"
     org = "HomeCare"
     q = "Who can apply to be a registered provider under this policy?"
     response = asyncio.run(ask_doc_bot(q, org, token))
-    print("print from bot main function: \n", json.loads(response.body))
+    print("\n📊 Final Response:\n", json.loads(response.body))
+
+
+
+# START
+#  │
+#  ├───⏱️ Parallel Fetch ────────────────────────────┐
+#  │   ├─ fetch_history_async()                      │
+#  │   └─ build_context_from_weaviate_results()      │
+#  │                   ↓                             │
+#  ├────────────────── Merge Results ────────────────┘
+#  │
+#  ├─── LLM Call (GPT-4)
+#  │
+#  ├───⏱️ Parallel Save ─────────────────────────────┐
+#  │   ├─ post_history()                             │
+#  │   ├─ post_readcount()                           │
+#  │   └─ post_token()                               │
+#  │                   ↓                             │
+#  └────────────────── Merge Results ────────────────┘
+#  ↓
+# RETURN Final JSONResponse ✅
