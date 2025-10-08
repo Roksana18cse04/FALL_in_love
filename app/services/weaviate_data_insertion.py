@@ -6,6 +6,7 @@ from app.services.s3_manager import S3Manager
 from fastapi.responses import JSONResponse
 from uuid import uuid5, NAMESPACE_URL
 import os
+from weaviate.classes.query import Filter
 
 s3 = S3Manager()
 
@@ -26,130 +27,89 @@ def chunk_text(text, max_chars=7000):
         chunks.append(current_chunk.strip())
     return chunks
 
-from weaviate.classes.query import Filter
+
 async def get_next_version(client, collection_name, title):
     """Get the next version number for a document with the given title"""
-    try:
-        collection = client.collections.get(collection_name)
-        
-        # Query for existing documents with the same title
-        results = collection.query.fetch_objects(
-            filters=Filter.by_property("title").equal(title)
-        )
-        
-        versions = []
-        for obj in results.objects:
-            v = obj.properties.get("version", "v1")
-            # Extract numeric part from version (e.g., "v2" -> 2)
-            try:
-                if v.startswith("v"):
-                    versions.append(int(v[1:]))
-                else:
-                    versions.append(int(v))
-            except (ValueError, TypeError):
-                versions.append(1)
-        
-        if not versions:
-            return "v1"
-        
-        print("all version version ---------", versions)
-        next_version = max(versions) + 1
-        print("next version -------------", next_version)
-        return f"v{next_version}"
-        
-    except Exception as e:
-        print(f"Error getting next version: {str(e)}")
+    collection = client.collections.get(collection_name)
+    
+    # Query for existing documents with the same title
+    results = collection.query.fetch_objects(
+        filters=Filter.by_property("title").equal(title)
+    )
+    
+    versions = []
+    for obj in results.objects:
+        v = obj.properties.get("version", "v1")
+        # Extract numeric part from version (e.g., "v2" -> 2)
+        try:
+            if v.startswith("v"):
+                versions.append(int(v[1:]))
+            else:
+                versions.append(int(v))
+        except (ValueError, TypeError):
+            versions.append(1)
+    
+    if not versions:
         return "v1"
-     
+    
+    print("all version version ---------", versions)
+    next_version = max(versions) + 1
+    print("next version -------------", next_version)
+    return f"v{next_version}"
+
 
 async def weaviate_insertion(organization, doc_db_id, document_type, document_object_key, summary, category="aged care"):
     client = get_weaviate_client()
     try:
-        # download file from s3
         temp_file_path = s3.download_document(document_object_key)
-        print("temp file path------------", temp_file_path)
         if not temp_file_path:
             return JSONResponse(status_code=404, content={
                 "status": "error",
-                "message": f"Failed to download file"
+                "message": "Failed to download file"
             })
-        
-        # Extract content from pdf
+
         data, title = await extract_content_from_pdf(temp_file_path)
-        print("docs title--------------", title)
-
-        # Ensure the client is connected
-        if not client.is_connected():
-            client.connect()  
-    
-         # Get collection
-        try:
-            collection = client.collections.get(organization)
-        except Exception:
-            return JSONResponse(status_code=404, content={
-                "status": "error",
-                "message": f"Collection '{organization}' not found in Weaviate."
-            })
-
-        # Split document text into chunks
         chunks = chunk_text(data)
-
         version = await get_next_version(client, organization, title)
-        print("current version -----------", version)
         document_id = uuid5(NAMESPACE_URL, f"{document_object_key}-{version}")
-        print("current document id ---------------", document_id)
 
         # Insert chunks
         for idx, chunk in enumerate(chunks):
             chunk_uuid = uuid5(document_id, f"chunk-{idx}")
-            collection.data.insert(
-                properties={
-                    "document_id": str(doc_db_id),
-                    "document_type": document_type,
-                    "title": title,
-                    "summary": summary,
-                    "category": category,
-                    "source": document_object_key,
-                    "version": version,
-                    "data": chunk,
-                    "created_at": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
-                    "last_updated": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-                },
-                uuid=str(chunk_uuid)
-            )
-        print(f"Document '{title}' inserted successfully with version {version} into class '{organization}'")
-        
+            try:
+                collection = client.collections.get(organization)
+                collection.data.insert(
+                    properties={
+                        "document_id": str(doc_db_id),
+                        "document_type": document_type,
+                        "title": title,
+                        "summary": summary,
+                        "category": category,
+                        "source": document_object_key,
+                        "version": version,
+                        "data": chunk,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "last_updated": datetime.now(timezone.utc).isoformat()
+                    },
+                    uuid=str(chunk_uuid)
+                )
+            except Exception as e:
+                raise e
+
         os.remove(temp_file_path)
-        return JSONResponse(status_code=201, content={
-            "status": "success",
-            "message": f"Document '{title}' inserted successfully with version {version}.",
-            "organization": organization,
-            "source": document_object_key,
-            "document_id": str(doc_db_id)
-        })
-        
+        return JSONResponse(
+            status_code=201,
+            content={
+                "status": "success",
+                "message": f"Document '{title}' inserted successfully with version {version}."
+            }
+        )
+    
     except Exception as e:
-        return JSONResponse(status_code=500, content={
-            "status": "error",
-            "message": str(e)
-        })
+        raise e
+
     finally:
         client.close()
-
-if __name__ == "__main__":
-    import asyncio
-    response = asyncio.run(weaviate_insertion(
-        organization="HomeCare",
-        doc_db_id=123,
-        document_type="policy",
-        document_object_key="AI/policy/privacy_confidentiality_information_governance/provider-registration-policy.pdf",
-        summary="This is a sample summary of the policy document.",
-        category="privacy_confidentiality_information_governance",
-    ))
-    from starlette.responses import JSONResponse
-    print(json.loads(response.body))
-
-
 
 
 

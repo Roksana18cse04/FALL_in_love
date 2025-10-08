@@ -10,6 +10,7 @@ from app.routes.delete_document import router as delete_document_router
 from app.routes.delete_schema import router as delete_schema_router
 from app.routes.summerizer import router as summarizer_router
 from app.routes.remove_aws_file import router as remove_cloud_file_router
+from app.core.error_handler import setup_global_error_handlers
 
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.weaviate_client import get_weaviate_client
@@ -26,6 +27,9 @@ async def lifespan(app: FastAPI):
         client.close()
 
 app = FastAPI(lifespan=lifespan)
+
+# ✅ 1️⃣ FIRST: Setup global error handlers (BEFORE adding routers)
+setup_global_error_handlers(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,6 +52,7 @@ app.include_router(delete_schema_router, prefix="/organization", tags=["Organiza
 app.include_router(policy_generate_router, prefix="/policy", tags=["Policy Generate"])
 app.include_router(policy_embedding_router, prefix="/policy", tags=["Policy Embedding"])
 app.include_router(policy_alignment_router, prefix="/policy", tags=["Policy Alignment"])
+
 
 @app.get("/")
 def read_root():
