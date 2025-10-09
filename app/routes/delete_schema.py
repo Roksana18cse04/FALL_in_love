@@ -1,5 +1,5 @@
 # delete schema
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from app.services.schema_manager import delete_schema
 from pydantic import BaseModel
 
@@ -10,4 +10,8 @@ router = APIRouter()
 
 @router.delete("/delete-organization")
 async def delete_organization_endpoint(request: DeleteOrganizationRequest):
-    return await delete_schema(request.organization)
+    try:
+        return await delete_schema(request.organization)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error Deleting Organization: {str(e)}")

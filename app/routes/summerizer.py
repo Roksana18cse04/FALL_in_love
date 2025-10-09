@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.services.summarize_pdf import summarize_with_gpt4
 from app.services.extract_content import extract_content_from_uploadpdf
 from app.services.classification import classify_category
@@ -58,4 +58,4 @@ async def get_summary_and_category_endpoint(auth_token:str, type: str, file: Upl
             })
 
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Error to Summerizing document: {str(e)}")

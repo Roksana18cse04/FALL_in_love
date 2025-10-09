@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from app.services.s3_manager import S3Manager
 from fastapi.responses import JSONResponse
 
@@ -26,4 +26,4 @@ async def delete_cloud_file_endpoint(version_id, object_key):
             })
 
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Error for Deleting AWS files: {str(e)}")

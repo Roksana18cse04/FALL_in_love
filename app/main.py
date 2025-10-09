@@ -28,8 +28,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# ✅ 1️⃣ FIRST: Setup global error handlers (BEFORE adding routers)
-setup_global_error_handlers(app)
+# # ✅ 1️⃣ FIRST: Setup global error handlers (BEFORE adding routers)
+# setup_global_error_handlers(app)
 
 app.add_middleware(
     CORSMiddleware,

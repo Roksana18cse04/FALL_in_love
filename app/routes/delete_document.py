@@ -1,7 +1,7 @@
 
 # remove weaviate data
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 import logging
 from app.services.weaviate_data_deletion import delete_weaviate_data
 from pydantic import BaseModel
@@ -23,13 +23,16 @@ class DeleteDocumentRequest(BaseModel):
 async def delete_document_endpoint(
     request: DeleteDocumentRequest
 ):
-    response = await delete_weaviate_data(
-        request.organization,
-        request.category,
-        request.document_type,
-        request.filename,
-        request.version,
-        request.s3version_id
-    )
-    logger.info("Deletion response: %s", response)
-    return response
+    try:
+        response = await delete_weaviate_data(
+            request.organization,
+            request.category,
+            request.document_type,
+            request.filename,
+            request.version,
+            request.s3version_id
+        )
+        logger.info("Deletion response: %s", response)
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error Deleting document: {str(e)}")

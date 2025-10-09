@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Form, UploadFile, File
+from fastapi import APIRouter, HTTPException
 from app.services.weaviate_data_insertion import weaviate_insertion
 from pydantic import BaseModel
 from weaviate.exceptions import UnexpectedStatusCodeError
@@ -29,21 +29,25 @@ async def insert_document_endpoint(request: Document):
         error_msg = str(e)
         if "429" in error_msg or "quota" in error_msg.lower():
             # OpenAI quota exceeded
-            return {
-                "status": "error",
-                "error_type": "quota_exceeded",
-                "message": "System's OpenAI quota limit has been reached. Please wait or upgrade your plan."
-            }
+            raise HTTPException(status_code=500,
+                                detail = {
+                                    "status": "error",
+                                    "error_type": "quota_exceeded",
+                                    "message": "System's OpenAI quota limit has been reached. Please wait or upgrade your plan."
+                                })
         else:
-            return {
-                "status": "error",
-                "error_type": "weaviate_error",
-                "message": error_msg
-            }
+            raise HTTPException(status_code=500,
+                                detail = {
+                                    "status": "error",
+                                    "error_type": "weaviate_error",
+                                    "message": error_msg
+                                })
     except Exception as e:
         # Catch all for other exceptions
-        return {
-            "status": "error",
-            "error_type": "internal_error",
-            "message": str(e)
-        }
+        raise HTTPException(
+            status_code=500,
+            detail= {
+                "status": "error",
+                "error_type": "internal_error",
+                "message": str(e)
+            })

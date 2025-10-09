@@ -73,8 +73,7 @@ async def build_context_from_weaviate_results(organization: str, query_text: str
         return vector_response.objects
 
     except Exception as e:
-        print(f"Query error: {e}")
-        return []
+        raise e
     finally:
         if client.is_connected():
             client.close()
@@ -160,176 +159,175 @@ async def save_data_parallel(history_data: dict, readcount_data: dict,
 
 
 async def ask_doc_bot(question: str, organization: str, auth_token: str):
-    """
-    Optimized version with parallel execution:
-    - Fetch history and build context in parallel
-    - Save all data (history, readcount, token) in parallel
-    """
-    
-    # ============ STEP 1: PARALLEL FETCH (History + Context) ============
-    print("⏱️ Starting parallel fetch...")
-    start_time = asyncio.get_event_loop().time()
-    
-    history_task = fetch_history_async(auth_token)
-    context_task = build_context_from_weaviate_results(
-        organization=organization,
-        query_text=question,
-        category="",
-        document_type=""
-    )
-    
-    # Wait for both to complete
-    history_result, context = await asyncio.gather(history_task, context_task)
-    
-    fetch_time = asyncio.get_event_loop().time() - start_time
-    print(f"✅ Parallel fetch completed in {fetch_time:.2f}s")
-    
-    # Check token limit
-    if history_result['remaining_tokens'] is not None and history_result['remaining_tokens'] < 1000:
-        return JSONResponse(status_code=400, content={
-            "status": "error",
-            "message": "Insufficient tokens to continue the conversation."
+    try:
+        # ============ STEP 1: PARALLEL FETCH (History + Context) ============
+        print("⏱️ Starting parallel fetch...")
+        start_time = asyncio.get_event_loop().time()
+        
+        history_task = fetch_history_async(auth_token)
+        context_task = build_context_from_weaviate_results(
+            organization=organization,
+            query_text=question,
+            category="",
+            document_type=""
+        )
+        
+        # Wait for both to complete
+        history_result, context = await asyncio.gather(history_task, context_task)
+        
+        fetch_time = asyncio.get_event_loop().time() - start_time
+        print(f"✅ Parallel fetch completed in {fetch_time:.2f}s")
+        
+        # Check token limit
+        if history_result['remaining_tokens'] is not None and history_result['remaining_tokens'] < 1000:
+            return JSONResponse(status_code=400, content={
+                "status": "error",
+                "message": "Insufficient tokens to continue the conversation."
+            })
+        
+        # Build chat history
+        chat_history = []
+        for h in history_result['histories']:
+            chat_history.append({"role": "user", "content": h['prompt']})
+            chat_history.append({"role": "assistant", "content": h['response']})
+        
+        # ============ STEP 2: LLM CALL ============
+        system_prompt = (
+            "You are Nestor AI, a smart, friendly, and compassionate digital assistant specifically designed to support senior citizens. "
+            "Your primary mission is to help older adults navigate policies, services, benefits, and general information questions with clarity and empathy.\n\n"
+            
+            "## Identity & Personality\n"
+            "- When asked 'Who are you?' or similar questions, warmly introduce yourself as Nestor AI, a dedicated helpful assistant for seniors and their families.\n"
+            "- Maintain a patient, respectful, and encouraging tone in all interactions.\n"
+            "- Use clear, simple language while avoiding condescension.\n\n"
+            
+            "## Context & Document Handling\n"
+            "- Each document excerpt includes metadata: Title, Source, Created At, Last Update, document_id, and summary.\n"
+            "- When answering from provided context documents, ALWAYS cite the source by including the document_id next to the title in this exact format: Title [IR-xxxxxx]\n"
+            "- If the context documents contain relevant information, prioritize that information in your response.\n"
+            "- If the answer is not found in the provided context, answer using your general knowledge without limitation.\n"
+            "- Always be transparent about your information source.\n\n"
+            
+            "## Language Handling\n"
+            "- If the user writes in English, reply in English.\n"
+            "- If the user writes in another language, reply in that language.\n"
+            "- If the user mixes languages naturally (code-switching), mirror that style in your response.\n\n"
+            
+            "## Response Format\n"
+            "Always return your response strictly in this JSON format without any additional text or markdown:\n"
+            "{\n"
+            '  "answer": "your complete answer here, including citations where applicable",\n'
+            '  "used_document": true_or_false\n'
+            "}\n\n"
+            
+            "## Response Guidelines\n"
+            "- Set used_document to true if you referenced any provided context documents.\n"
+            "- Set used_document to false if you answered entirely from general knowledge.\n"
+            "- Provide complete, helpful answers that directly address the user's question.\n"
+            "- When appropriate, offer additional relevant information that might be helpful.\n"
+        )
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(chat_history)
+        
+        if context:
+            user_content = f"Context:\n{context}\n\nQuestion: {question}"
+        else:
+            user_content = f"Question: {question}"
+        
+        messages.append({"role": "user", "content": user_content})
+        
+        # GPT-4 call
+        print("⏱️ Starting LLM call...")
+        llm_start = asyncio.get_event_loop().time()
+        
+        async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
+            response = await openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=messages,
+                temperature=0.3
+            )
+        
+        llm_time = asyncio.get_event_loop().time() - llm_start
+        print(f"✅ LLM call completed in {llm_time:.2f}s")
+        
+        used_tokens = response.usage.total_tokens
+        answer = response.choices[0].message.content.strip()
+        json_answer = extract_json_from_llm(answer)
+        
+        # Ensure we have a dict
+        if isinstance(json_answer, str):
+            try:
+                json_answer = json.loads(json_answer.replace("'", '"'))
+            except Exception:
+                json_answer = {
+                    "answer": json_answer,
+                    "used_document": False
+                }
+        
+        print('Bot answer after LLM parser------------\n', json_answer)
+        
+        # ============ STEP 3: PARALLEL SAVE (History + ReadCount + Token) ============
+        print("⏱️ Starting parallel save...")
+        save_start = asyncio.get_event_loop().time()
+        
+        # Prepare read count data
+        readcount_data = {}
+        if json_answer['used_document'] and context:
+            for c in context:
+                doc_id = c.properties.get("document_id", "")
+                readcount_data[doc_id] = 1
+            print("Document ID list--\n", readcount_data)
+        
+        # Prepare data for parallel save
+        history_data = {
+            "prompt": question,
+            "response": json_answer['answer'],
+            "used_tokens": used_tokens
+        }
+        
+        token_data = {
+            "used_tokens": used_tokens
+        }
+        
+        # Save all in parallel
+        save_results = await save_data_parallel(
+            history_data, 
+            readcount_data, 
+            token_data, 
+            auth_token
+        )
+        
+        save_time = asyncio.get_event_loop().time() - save_start
+        print(f"✅ Parallel save completed in {save_time:.2f}s")
+        
+        # Check for errors
+        for result in save_results:
+            if isinstance(result, dict):
+                if result['status'] not in [200, 201] and not result.get('skipped'):
+                    print(f"⚠️ Warning: {result['type']} save failed with status {result['status']}")
+                    # Don't return error, just log it - user still gets their answer
+        
+        total_time = asyncio.get_event_loop().time() - start_time
+        print(f"🎯 Total request time: {total_time:.2f}s")
+        
+        # Finally return
+        return JSONResponse(status_code=200, content={
+            "status": "success",
+            "question": question,
+            "answer": json_answer['answer'],
+            "used_tokens": used_tokens,
+            "performance": {
+                "fetch_time": f"{fetch_time:.2f}s",
+                "llm_time": f"{llm_time:.2f}s",
+                "save_time": f"{save_time:.2f}s",
+                "total_time": f"{total_time:.2f}s"
+            }
         })
     
-    # Build chat history
-    chat_history = []
-    for h in history_result['histories']:
-        chat_history.append({"role": "user", "content": h['prompt']})
-        chat_history.append({"role": "assistant", "content": h['response']})
-    
-    # ============ STEP 2: LLM CALL ============
-    system_prompt = (
-        "You are Nestor AI, a smart, friendly, and compassionate digital assistant specifically designed to support senior citizens. "
-        "Your primary mission is to help older adults navigate policies, services, benefits, and general information questions with clarity and empathy.\n\n"
-        
-        "## Identity & Personality\n"
-        "- When asked 'Who are you?' or similar questions, warmly introduce yourself as Nestor AI, a dedicated helpful assistant for seniors and their families.\n"
-        "- Maintain a patient, respectful, and encouraging tone in all interactions.\n"
-        "- Use clear, simple language while avoiding condescension.\n\n"
-        
-        "## Context & Document Handling\n"
-        "- Each document excerpt includes metadata: Title, Source, Created At, Last Update, document_id, and summary.\n"
-        "- When answering from provided context documents, ALWAYS cite the source by including the document_id next to the title in this exact format: Title [IR-xxxxxx]\n"
-        "- If the context documents contain relevant information, prioritize that information in your response.\n"
-        "- If the answer is not found in the provided context, answer using your general knowledge without limitation.\n"
-        "- Always be transparent about your information source.\n\n"
-        
-        "## Language Handling\n"
-        "- If the user writes in English, reply in English.\n"
-        "- If the user writes in another language, reply in that language.\n"
-        "- If the user mixes languages naturally (code-switching), mirror that style in your response.\n\n"
-        
-        "## Response Format\n"
-        "Always return your response strictly in this JSON format without any additional text or markdown:\n"
-        "{\n"
-        '  "answer": "your complete answer here, including citations where applicable",\n'
-        '  "used_document": true_or_false\n'
-        "}\n\n"
-        
-        "## Response Guidelines\n"
-        "- Set used_document to true if you referenced any provided context documents.\n"
-        "- Set used_document to false if you answered entirely from general knowledge.\n"
-        "- Provide complete, helpful answers that directly address the user's question.\n"
-        "- When appropriate, offer additional relevant information that might be helpful.\n"
-    )
-    
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(chat_history)
-    
-    if context:
-        user_content = f"Context:\n{context}\n\nQuestion: {question}"
-    else:
-        user_content = f"Question: {question}"
-    
-    messages.append({"role": "user", "content": user_content})
-    
-    # GPT-4 call
-    print("⏱️ Starting LLM call...")
-    llm_start = asyncio.get_event_loop().time()
-    
-    async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
-        response = await openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=messages,
-            temperature=0.3
-        )
-    
-    llm_time = asyncio.get_event_loop().time() - llm_start
-    print(f"✅ LLM call completed in {llm_time:.2f}s")
-    
-    used_tokens = response.usage.total_tokens
-    answer = response.choices[0].message.content.strip()
-    json_answer = extract_json_from_llm(answer)
-    
-    # Ensure we have a dict
-    if isinstance(json_answer, str):
-        try:
-            json_answer = json.loads(json_answer.replace("'", '"'))
-        except Exception:
-            json_answer = {
-                "answer": json_answer,
-                "used_document": False
-            }
-    
-    print('Bot answer after LLM parser------------\n', json_answer)
-    
-    # ============ STEP 3: PARALLEL SAVE (History + ReadCount + Token) ============
-    print("⏱️ Starting parallel save...")
-    save_start = asyncio.get_event_loop().time()
-    
-    # Prepare read count data
-    readcount_data = {}
-    if json_answer['used_document'] and context:
-        for c in context:
-            doc_id = c.properties.get("document_id", "")
-            readcount_data[doc_id] = 1
-        print("Document ID list--\n", readcount_data)
-    
-    # Prepare data for parallel save
-    history_data = {
-        "prompt": question,
-        "response": json_answer['answer'],
-        "used_tokens": used_tokens
-    }
-    
-    token_data = {
-        "used_tokens": used_tokens
-    }
-    
-    # Save all in parallel
-    save_results = await save_data_parallel(
-        history_data, 
-        readcount_data, 
-        token_data, 
-        auth_token
-    )
-    
-    save_time = asyncio.get_event_loop().time() - save_start
-    print(f"✅ Parallel save completed in {save_time:.2f}s")
-    
-    # Check for errors
-    for result in save_results:
-        if isinstance(result, dict):
-            if result['status'] not in [200, 201] and not result.get('skipped'):
-                print(f"⚠️ Warning: {result['type']} save failed with status {result['status']}")
-                # Don't return error, just log it - user still gets their answer
-    
-    total_time = asyncio.get_event_loop().time() - start_time
-    print(f"🎯 Total request time: {total_time:.2f}s")
-    
-    # Finally return
-    return JSONResponse(status_code=200, content={
-        "status": "success",
-        "question": question,
-        "answer": json_answer['answer'],
-        "used_tokens": used_tokens,
-        "performance": {
-            "fetch_time": f"{fetch_time:.2f}s",
-            "llm_time": f"{llm_time:.2f}s",
-            "save_time": f"{save_time:.2f}s",
-            "total_time": f"{total_time:.2f}s"
-        }
-    })
+    except Exception as e:
+        print(f"❌ ask_doc_bot failed:--------- {str(e)}")
+        raise e
 
 
 # Test function
