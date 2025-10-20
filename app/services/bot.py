@@ -595,12 +595,11 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
         # Build chat history
         chat_history = []
         for h in history_result.get('histories', []):
-        for h in history_result.get('histories', []):
             chat_history.append({"role": "user", "content": h['prompt']})
             chat_history.append({"role": "assistant", "content": h['response']})
         
         # ================= STEP 2: LLM CALL =================
-                # ============ STEP 2: LLM CALL ============
+               
         system_prompt = (
             "You are Nestor AI, a smart, friendly assistant specifically designed to support senior citizens. "
             "Your primary mission is to help older adults navigate policies, services, benefits, and general information questions with clarity, empathy, and careful analysis.\n\n"
