@@ -50,7 +50,7 @@ app.include_router(create_organization_router, prefix="/organization", tags=["Or
 app.include_router(delete_schema_router, prefix="/organization", tags=["Organization"])
 
 app.include_router(policy_generate_router, prefix="/policy", tags=["Policy Generate"])
-app.include_router(policy_embedding_router, prefix="/policy", tags=["Policy Embedding"])
+app.include_router(policy_embedding_router, prefix="/policy", tags=["Law Upload-Delete"])
 app.include_router(policy_alignment_router, prefix="/policy", tags=["Policy Alignment"])
 
 

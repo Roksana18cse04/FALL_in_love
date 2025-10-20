@@ -1,6 +1,27 @@
 import pdfplumber
 import os
 from fastapi import UploadFile
+import re
+
+def clean_ocr_noise(text):
+    # Remove broken characters from OCR output
+    text = re.sub(r'[|_—–•·“”‘’]', '', text)
+
+    # Fix hyphenated words broken at line endings
+    text = re.sub(r'(\w+)-\s+(\w+)', r'\1\2', text)
+
+    # Remove dotted leaders like ". . . . ." or ". . ."
+    text = re.sub(r'(\.\s*){2,}', ' ', text)
+
+    # Normalize multiple dots or commas (e.g., "....." → ".")
+    text = re.sub(r'\.{2,}', '.', text)
+    text = re.sub(r',,', ',', text)
+
+    # Optional: remove trailing numbers from headings like "13"
+    text = re.sub(r'\s+\d+\s*$', '', text, flags=re.MULTILINE)
+
+    return text
+
 
 async def extract_content_from_pdf(file_path: str):
     text = ""
@@ -14,8 +35,8 @@ async def extract_content_from_pdf(file_path: str):
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
-
-        return text.strip(), title
+        clean_text = clean_ocr_noise(text)
+        return clean_text, title
 
     except Exception as e:
         print(f"Error extracting PDF content: {str(e)}")
@@ -28,7 +49,6 @@ async def extract_content_from_uploadpdf(file: UploadFile):
     """
     text = ""
     title = file.filename
-    print(f"Summarizing the {title}...........")
 
     try:
         # Read file bytes
@@ -42,7 +62,8 @@ async def extract_content_from_uploadpdf(file: UploadFile):
                 if page_text:
                     text += page_text + "\n"
 
-        return text.strip(), title
+        clean_text = clean_ocr_noise(text)
+        return clean_text, title
 
     except Exception as e:
         print(f"Error extracting PDF content: {str(e)}")

@@ -13,11 +13,8 @@ router = APIRouter()
 
 class DeleteDocumentRequest(BaseModel):
     organization: str = "HomeCare"
-    category: str = "privacy_confidentiality_information_governance"
-    document_type: str = "policy"
-    filename: str = "Provider registration policy"
+    object_key: str
     version: str = "v1"
-    s3version_id: str
 
 @router.delete("/delete-document")
 async def delete_document_endpoint(
@@ -26,11 +23,8 @@ async def delete_document_endpoint(
     try:
         response = await delete_weaviate_data(
             request.organization,
-            request.category,
-            request.document_type,
-            request.filename,
-            request.version,
-            request.s3version_id
+            request.object_key,
+            request.version
         )
         logger.info("Deletion response: %s", response)
         return response

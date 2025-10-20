@@ -40,22 +40,28 @@ async def get_summary_and_category_endpoint(auth_token:str, type: str, file: Upl
             
         })
 
-        # upload to cloud storage
-        upload_response = s3_manager.upload_document(file, category, type)
-        if upload_response:
-            return {
-                "summary": summary,
-                "category": category,
-                "used_tokens": total_used_tokens,
-                "aws_object_key": upload_response['object_key'],
-                "aws_version_id": upload_response['version_id'] 
-            }
-        else:
-            print('File Uploaded Failed')
-            return JSONResponse(status_code=500, content={
-                "status": "error",
-                "message": "File upload failed."
-            })
+        # # upload to cloud storage
+        # upload_response = s3_manager.upload_document(file, category, type)
+        # if upload_response:
+        #     return {
+        #         "summary": summary,
+        #         "category": category,
+        #         "used_tokens": total_used_tokens,
+        #         "aws_object_key": upload_response['object_key'],
+        #         "aws_version_id": upload_response['version_id'] 
+        #     }
+        # else:
+        #     print('File Uploaded Failed')
+        #     return JSONResponse(status_code=500, content={
+        #         "status": "error",
+        #         "message": "File upload failed."
+        #     })
+
+        return {
+            "summary": summary,
+            "category": category,
+            "used_tokens": total_used_tokens
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error to Summerizing document: {str(e)}")

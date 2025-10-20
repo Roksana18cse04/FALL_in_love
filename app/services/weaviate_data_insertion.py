@@ -58,7 +58,7 @@ async def get_next_version(client, collection_name, title):
     return f"v{next_version}"
 
 
-async def weaviate_insertion(organization, doc_db_id, document_type, document_object_key, summary, category="aged care"):
+async def weaviate_insertion(organization, doc_db_id, document_type, document_object_key, category):
     client = get_weaviate_client()
     try:
         temp_file_path = s3.download_document(document_object_key)
@@ -83,7 +83,6 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ob
                         "document_id": str(doc_db_id),
                         "document_type": document_type,
                         "title": title,
-                        "summary": summary,
                         "category": category,
                         "source": document_object_key,
                         "version": version,

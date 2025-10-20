@@ -1,11 +1,13 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from weaviate.classes.query import Filter
-from app.services.extract_content import extract_content_from_pdf
+from app.services.extract_content import extract_content_from_uploadpdf
+from app.services.law_deletion import delete_weaviate_law
 from app.services.weaviate_client import get_weaviate_client
 from app.services.embedding_service import embed_text_openai
 import uuid
 import re
+from app.config import GLOBAL_ORG
 
 router = APIRouter()
 
@@ -68,109 +70,122 @@ def compute_global_next_version(collection) -> str:
         return "v1"
 
 @router.post("/admin/upload-law")
-async def upload_policy_pdf(file: UploadFile = File(...)):
+async def upload_law_pdf(file: UploadFile = File(...)):
+    try:
     # Extract text from PDF
-    text, title = await extract_content_from_pdf(file)
-    if not text:
-        raise HTTPException(status_code=400, detail="Could not extract text from PDF.")
-    # Embed text
-    embedding = await embed_text_openai(text)
-    # Save to Weaviate
-    client = get_weaviate_client()
-    # Check if collection exists, create if not
-    collections = client.collections.list_all()
-    if "PolicyEmbeddings" not in collections:
-        from weaviate.classes.config import Property, DataType, Configure, VectorDistances, Tokenization
-        client.collections.create(
-            name="PolicyEmbeddings",
-            vectorizer_config=Configure.Vectorizer.none(),
-            vector_index_config=Configure.VectorIndex.hnsw(
-                distance_metric=VectorDistances.COSINE,
-                ef_construction=128,
-                max_connections=64
-            ),
-            properties=[
-                Property(name="policy_id", data_type=DataType.TEXT),
-                Property(name="filename", data_type=DataType.TEXT),
-                Property(name="title", data_type=DataType.TEXT),
-                Property(name="text", data_type=DataType.TEXT),
-                Property(name="version", data_type=DataType.TEXT),
-                Property(name="embedding", data_type=DataType.NUMBER_ARRAY)
-            ]
-        )
-    # Ensure existing collection has the 'version' property
-    collection = client.collections.get("PolicyEmbeddings")
-    try:
-        schema = collection.schema.get()
-        prop_names = [p.get("name") for p in schema.get("properties", [])]
-        if "version" not in prop_names:
-            from weaviate.classes.config import Property, DataType
-            collection.schema.add_property(Property(name="version", data_type=DataType.TEXT))
-    except Exception:
-        # Schema fetch/addition best-effort; proceed with insert
-        pass
-    obj_id = str(uuid.uuid4())
-    # Decide version: global auto-increment regardless of title/filename
-    version_value = compute_global_next_version(collection)
-    collection.data.insert({
-        "policy_id": obj_id,
-        "filename": file.filename,
-        "title": title,
-        "text": text,
-        "version": version_value,
-        "embedding": embedding
-    }, vector=embedding)
-    return {"status": "success", "policy_id": obj_id}
+        text, title = await extract_content_from_uploadpdf(file)
+        print("text----------", text[:500])
 
-@router.get("/admin/policy-text")
-async def get_policy_text(version: str | None = Query(default=None), as_file: bool = Query(default=False)):
-    """Fetch policy text by version. If version is omitted, return latest version.
+        if not text:
+            raise HTTPException(status_code=400, detail="Could not extract text from PDF.")
 
-    - version: e.g., 'v3'. If None, the object with the highest version is returned.
-    - as_file: when true, returns a text/plain response with Content-Disposition.
-    """
-    client = get_weaviate_client()
-    try:
-        collection = client.collections.get("PolicyEmbeddings")
+        # Embed text
+        embedding = await embed_text_openai(text)
 
-        def version_to_int(v: str) -> int:
-            try:
-                if isinstance(v, str) and v.startswith("v"):
-                    return int(v[1:])
-                return int(v)
-            except Exception:
-                return 1
+        # Connect to Weaviate (REST-safe connection)
+        client = get_weaviate_client()
 
-        if version:
-            results = collection.query.fetch_objects(
-                filters=Filter.by_property("version").equal(version)
+        # ✅ Check if collection exists
+        collections = client.collections.list_all()
+
+        if GLOBAL_ORG not in collections:
+            from weaviate.classes.config import Property, DataType, Configure, VectorDistances
+
+            client.collections.create(
+                name=GLOBAL_ORG,
+                vectorizer_config=Configure.Vectorizer.none(),
+                vector_index_config=Configure.VectorIndex.hnsw(
+                    distance_metric=VectorDistances.COSINE,
+                    ef_construction=128,
+                    max_connections=64,
+                ),
+                properties=[
+                    Property(name="law_id", data_type=DataType.TEXT),
+                    Property(name="title", data_type=DataType.TEXT),
+                    Property(name="text", data_type=DataType.TEXT),
+                    Property(name="version", data_type=DataType.TEXT),
+                    Property(name="embedding", data_type=DataType.NUMBER_ARRAY),
+                ],
             )
-            objs = getattr(results, "objects", []) or []
-            if not objs:
-                raise HTTPException(status_code=404, detail=f"No policy found for version {version}")
-            obj = objs[-1]
-        else:
-            results = collection.query.fetch_objects()
-            objs = getattr(results, "objects", []) or []
-            if not objs:
-                raise HTTPException(status_code=404, detail="No policies found")
-            obj = max(objs, key=lambda o: version_to_int((o.properties or {}).get("version", "v1")))
 
-        props = obj.properties or {}
-        text_value = props.get("text", "")
-        if as_file:
-            filename = props.get("filename") or f"policy_{props.get('version','v1')}.txt"
-            headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
-            return PlainTextResponse(content=text_value, headers=headers)
-        return {
-            "policy_id": props.get("policy_id"),
-            "filename": props.get("filename"),
-            "title": props.get("title"),
-            "version": props.get("version"),
-            "text": text_value,
-        }
+        # ✅ No need to manually check .schema — properties are defined at creation
+        collection = client.collections.get(GLOBAL_ORG)
+
+        # ✅ Insert data
+        collection.data.insert({
+            "law_id": str(uuid.uuid4()),
+            "title": title,
+            "text": text,
+            "version": "v1",
+            "embedding": embedding
+        })
+
+        return {"status": "success", "title": title}
+    except Exception as e:
+        return {"status": "failed", "message": str(e)}
+    
     finally:
-        try:
-            client.close()
-        except Exception:
-            pass
+        client.close()
+
+
+
+@router.get("/admin/delete-law")
+async def delete_law(db_version: str, filename: str ):
+    response = await delete_weaviate_law(db_version, filename)
+    return response
+
+
+
+
+# @router.get("/admin/policy-text")
+# async def get_policy_text(version: str | None = Query(default=None), as_file: bool = Query(default=False)):
+#     """Fetch policy text by version. If version is omitted, return latest version.
+
+#     - version: e.g., 'v3'. If None, the object with the highest version is returned.
+#     - as_file: when true, returns a text/plain response with Content-Disposition.
+#     """
+#     client = get_weaviate_client()
+#     try:
+#         collection = client.collections.get("PolicyEmbeddings")
+
+#         def version_to_int(v: str) -> int:
+#             try:
+#                 if isinstance(v, str) and v.startswith("v"):
+#                     return int(v[1:])
+#                 return int(v)
+#             except Exception:
+#                 return 1
+
+#         if version:
+#             results = collection.query.fetch_objects(
+#                 filters=Filter.by_property("version").equal(version)
+#             )
+#             objs = getattr(results, "objects", []) or []
+#             if not objs:
+#                 raise HTTPException(status_code=404, detail=f"No policy found for version {version}")
+#             obj = objs[-1]
+#         else:
+#             results = collection.query.fetch_objects()
+#             objs = getattr(results, "objects", []) or []
+#             if not objs:
+#                 raise HTTPException(status_code=404, detail="No policies found")
+#             obj = max(objs, key=lambda o: version_to_int((o.properties or {}).get("version", "v1")))
+
+#         props = obj.properties or {}
+#         text_value = props.get("text", "")
+#         if as_file:
+#             filename = props.get("filename") or f"policy_{props.get('version','v1')}.txt"
+#             headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
+#             return PlainTextResponse(content=text_value, headers=headers)
+#         return {
+#             "policy_id": props.get("policy_id"),
+#             "filename": props.get("filename"),
+#             "title": props.get("title"),
+#             "version": props.get("version"),
+#             "text": text_value,
+#         }
+#     finally:
+#         try:
+#             client.close()
+#         except Exception:
+#             pass

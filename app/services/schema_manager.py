@@ -59,12 +59,6 @@ async def create_schema(organization: str):
                         tokenization=Tokenization.WORD
                     ),
                     Property(
-                        name="summary", 
-                        data_type=DataType.TEXT,
-                        vectorize_property_name=False,
-                        tokenization=Tokenization.WORD
-                    ),
-                    Property(
                         name="category", 
                         data_type=DataType.TEXT,
                         vectorize_property_name=False,
