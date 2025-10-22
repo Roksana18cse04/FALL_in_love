@@ -1,20 +1,20 @@
 from sentence_transformers import CrossEncoder
+import os
 
 # ============ GLOBAL RERANKER MODEL ============
 class LocalReranker:
     """Local cross-encoder reranker using sentence-transformers"""
     
     def __init__(self, model_name='cross-encoder/ms-marco-MiniLM-L-6-v2'):
-        """
-        Initialize reranker model
-        Options:
-        - 'cross-encoder/ms-marco-MiniLM-L-6-v2' (fast, 80MB)
-        - 'cross-encoder/ms-marco-MiniLM-L-12-v2' (better, 120MB)
-        - 'BAAI/bge-reranker-base' (best for general use, 278MB)
-        """
-        print(f"🔄 Loading reranker model: {model_name}")
-        self.model = CrossEncoder(model_name)
-        print(f"✅ Reranker model loaded successfully")
+        local_path = "./models/reranker"
+        if os.path.exists(local_path):
+            print(f"📦 Found local reranker at {local_path}")
+            self.model = CrossEncoder(local_path, trust_remote_code=True)
+        else:
+            print(f"🌐 Downloading model from Hugging Face: {model_name}")
+            self.model = CrossEncoder(model_name, trust_remote_code=True)
+            self.model.save(local_path)
+            print("💾 Model saved locally for future runs.")
     
     def rerank(self, query: str, documents: list, top_k: int = 5):
         """
