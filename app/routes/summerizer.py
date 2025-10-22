@@ -9,18 +9,27 @@ from fastapi.responses import JSONResponse
 import asyncio
 from app.services.policy_comparison_service import combined_alignment_analysis
 from app.config import GLOBAL_ORG
+from pydantic import BaseModel
 
 router = APIRouter()
 
 s3_manager = S3Manager()
 
+class SummaryRequest(BaseModel):
+    auth_token: str
+    organization_type: str
+    doc_title: str
+    html_text: str
+
+
 @router.post("/summary-with-category")
-async def get_summary_and_category_endpoint(auth_token:str, organization_type: str, doc_title: str, html_text: str):
+async def get_summary_and_category_endpoint(request: SummaryRequest):
     # Implement your summary logic here
     try:
         # text, title = await extract_content_from_uploadpdf(file)
-        text = await extract_plain_text(html_text)
-        title = doc_title
+        text = await extract_plain_text(request.html_text)
+        title = request.doc_title
+        organization_type = request.organization_type
         print("-----------successfully extracted content")
         
         # Run summary and alignment analysis in parallel
