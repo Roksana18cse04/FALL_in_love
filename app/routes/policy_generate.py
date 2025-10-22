@@ -1,32 +1,127 @@
+"""
+Updated FastAPI route with organization_type parameter
+"""
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter
 from pydantic import BaseModel
-from app.services.policy_llm import generate_policy_with_vector_laws
+from app.services.policy_llm import generate_policy_html
 
-router = APIRouter()
+router = APIRouter(prefix="/policy", tags=["Policy Generation"])
 
-class PolicyRequest(BaseModel):
+
+class PolicyGenerationRequest(BaseModel):
     title: str
     context: str
+    organization_type: str
+    target_words: int = 3000
+    
 
-@router.post("/generate-policy")
-async def generate_policy_endpoint(request: PolicyRequest):
+
+class PolicyGenerationResponse(BaseModel):
+    generated_content: str = None
+    word_count: int
+    success: bool
+    error_message: str = None
+    original_context: str
+
+
+@router.post("/generate-html", response_model=PolicyGenerationResponse)
+async def generate_policy_content(request: PolicyGenerationRequest):
     """
-    Generate policy using super admin laws from Weaviate vector database.
-    Automatically retrieves latest version laws and generates policy with strict adherence.
+    Generate policy content in HTML format with professional inline styling.
+    Returns HTML-formatted content with inline CSS (no embedded <style> tags).
+    
+    Args:
+        request: PolicyGenerationRequest containing:
+            - title: Policy title
+            - context: Policy context/description
+            - target_words: Target word count (default: 3000)
+            - organization_type: Collection name in Weaviate (default: "PolicyEmbeddings")
+        
+    Returns:
+        PolicyGenerationResponse with:
+            - generated_content: HTML with inline styles
+            - word_count: Actual word count
+            - success: True/False
+            - error_message: Error details if failed
+            - original_context: Original input context
+    
+    Example:
+        POST /policy/generate-html
+        {
+            "title": "Data Privacy Policy",
+            "context": "Policy for handling customer data",
+            "target_words": 3000,
+            "organization_type": "HomeCareAct"
+        }
     """
     try:
-        result = await generate_policy_with_vector_laws(
+        result = await generate_policy_html(
             title=request.title,
             context=request.context,
-            version=None  # Use latest version
+            organization_type=request.organization_type,
+            target_words=request.target_words
+            
         )
         
-        if result["status"] == "error":
-            raise HTTPException(status_code=400, detail=result["message"])
-        
-        return JSONResponse(content=result)
-        
+        return PolicyGenerationResponse(
+            generated_content=result.get("generated_content"),
+            word_count=result.get("word_count", 0),
+            success=result.get("success", False),
+            error_message=result.get("error_message"),
+            original_context=result.get("original_context", "")
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating policy: {str(e)}")
+        print(f"Route error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return PolicyGenerationResponse(
+            generated_content=None,
+            word_count=0,
+            success=False,
+            error_message=str(e),
+            original_context=f"{request.title} - {request.context}"
+        )
+
+
+@router.post("/generate-policy")
+async def generate_policy_content_legacy(request: PolicyGenerationRequest):
+    """
+    Legacy endpoint for backward compatibility.
+    Generates policy content and returns in the original format.
+    """
+    try:
+        result = await generate_policy_html(
+            title=request.title,
+            context=request.context,
+            target_words=request.target_words,
+            organization_type=request.organization_type
+        )
+        print("generate_policy_content---------\n:", result.get("generated_content"))
+        # Return in original format for backward compatibility
+        return {
+            "status": result.get("status", "success"),
+            "generated_content": result.get("generated_content"),
+            "word_count": result.get("word_count", 0),
+            "success": result.get("success", False),
+            "error_message": result.get("error_message"),
+            "original_context": result.get("original_context", "")
+        }
+    except Exception as e:
+        print(f"Route error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "generated_content": None,
+            "word_count": 0,
+            "success": False,
+            "error_message": str(e),
+            "original_context": f"{request.title} - {request.context}"
+        }
+
+
+@router.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "Policy Generation API"}

@@ -7,7 +7,6 @@ from app.services.weaviate_client import get_weaviate_client
 from app.services.embedding_service import embed_text_openai
 import uuid
 import re
-from app.config import GLOBAL_ORG
 
 router = APIRouter()
 
@@ -70,7 +69,7 @@ def compute_global_next_version(collection) -> str:
         return "v1"
 
 @router.post("/admin/upload-law")
-async def upload_law_pdf(file: UploadFile = File(...)):
+async def upload_law_pdf(law_type: str, file: UploadFile = File(...)):
     try:
     # Extract text from PDF
         text, title = await extract_content_from_uploadpdf(file)
@@ -88,11 +87,11 @@ async def upload_law_pdf(file: UploadFile = File(...)):
         # ✅ Check if collection exists
         collections = client.collections.list_all()
 
-        if GLOBAL_ORG not in collections:
+        if law_type not in collections:
             from weaviate.classes.config import Property, DataType, Configure, VectorDistances
 
             client.collections.create(
-                name=GLOBAL_ORG,
+                name=law_type,
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=Configure.VectorIndex.hnsw(
                     distance_metric=VectorDistances.COSINE,
@@ -109,18 +108,21 @@ async def upload_law_pdf(file: UploadFile = File(...)):
             )
 
         # ✅ No need to manually check .schema — properties are defined at creation
-        collection = client.collections.get(GLOBAL_ORG)
+        collection = client.collections.get(law_type)
+        
+        # Get next version for this title
+        next_version = compute_next_version(collection, title)
 
         # ✅ Insert data
         collection.data.insert({
             "law_id": str(uuid.uuid4()),
             "title": title,
             "text": text,
-            "version": "v1",
+            "version": next_version,
             "embedding": embedding
         })
 
-        return {"status": "success", "title": title}
+        return {"status": "success", "title": title, "version": next_version}
     except Exception as e:
         return {"status": "failed", "message": str(e)}
     
@@ -130,8 +132,8 @@ async def upload_law_pdf(file: UploadFile = File(...)):
 
 
 @router.get("/admin/delete-law")
-async def delete_law(db_version: str, filename: str ):
-    response = await delete_weaviate_law(db_version, filename)
+async def delete_law(version: str, filename: str ):
+    response = await delete_weaviate_law(version, filename)
     return response
 
 

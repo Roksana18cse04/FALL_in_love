@@ -1,4 +1,3 @@
-
 from openai import OpenAI
 import logging
 from typing import List, Dict
@@ -6,12 +5,20 @@ import json
 import numpy as np
 from fastapi import HTTPException, UploadFile
 from app.services.extract_content import extract_content_from_uploadpdf
+from functools import lru_cache
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from app.services.weaviate_client import get_weaviate_client
+from app.config import OPENAI_API_KEY
 
+# Create a sync wrapper for async compatibility
+def run_in_executor(func, *args):
+    """Run sync function in thread pool"""
+    loop = asyncio.get_event_loop()
+    return loop.run_in_executor(None, func, *args)
 
 
 def cosine_similarity(vector_a, vector_b):
@@ -24,24 +31,33 @@ def cosine_similarity(vector_a, vector_b):
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-
-def fetch_weaviate_policies(organization: str):
+@lru_cache(maxsize=50)
+def fetch_weaviate_policies_cached(collection_name: str, cache_key: str = "default"):
+    """Cache করা Weaviate policies fetch"""
     try:
         client = get_weaviate_client()
         if not client.is_connected():
             client.connect()
-        collection = client.collections.get(organization)
+        collection = client.collections.get(collection_name)
         response = collection.query.fetch_objects(limit=1000)
         return response.objects
     except Exception as e:
-        return {'status': 'error', 'message': str(e)}
+        logger.error(f"Weaviate fetch error: {str(e)}")
+        return []
     finally:
         if client.is_connected():
             client.close()
 
 
-def chunk_text(text: str, max_chunk_size: int = 12000, overlap: int = 500) -> List[str]:
-    """Chunk large texts by characters with small overlap for LLM processing."""
+def fetch_weaviate_policies(collection_name: str):
+    """Non-cached version for direct calls"""
+    import time
+    cache_key = str(int(time.time() // 300))  # 5 minute cache
+    return fetch_weaviate_policies_cached(collection_name, cache_key)
+
+
+def chunk_text(text: str, max_chunk_size: int = 8000, overlap: int = 300) -> List[str]:
+    """Optimized chunking with smaller chunks"""
     if len(text) <= max_chunk_size:
         return [text]
     chunks: List[str] = []
@@ -56,74 +72,74 @@ def chunk_text(text: str, max_chunk_size: int = 12000, overlap: int = 500) -> Li
 
 
 async def summarize_large_text(openai_client: OpenAI, text: str, title: str) -> str:
-    """Fast summarization with parallel chunk processing."""
+    """Optimized summarization with parallel chunk processing"""
     if not text:
         return ""
     
-    # Reduce chunk size and overlap for speed
     chunks = chunk_text(text, max_chunk_size=8000, overlap=300)
     
     if len(chunks) == 1:
-        # Single chunk - direct summary
         try:
-            resp = openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Faster model
+            resp = await asyncio.to_thread(
+                openai_client.chat.completions.create,
+                model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Concise policy summary in 8-10 bullets."},
+                    {"role": "system", "content": "Concise policy summary in 6-8 bullets."},
                     {"role": "user", "content": f"Title: {title}\n\n{chunks[0]}"}
                 ],
                 temperature=0.1,
-                max_tokens=800
+                max_tokens=600
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
             logger.warning(f"Summary failed: {str(e)}")
-            return text[:3000]
+            return text[:2000]
     
     # Multiple chunks - parallel processing
     async def summarize_chunk(idx: int, chunk: str) -> str:
         try:
-            resp = openai_client.chat.completions.create(
+            resp = await asyncio.to_thread(
+                openai_client.chat.completions.create,
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Extract key points in 4-6 bullets."},
+                    {"role": "system", "content": "Extract key points in 4-5 bullets."},
                     {"role": "user", "content": f"{title} Part {idx+1}:\n{chunk}"}
                 ],
                 temperature=0.1,
-                max_tokens=500
+                max_tokens=400
             )
             return resp.choices[0].message.content.strip()
         except Exception:
-            return chunk[:1000]
+            return chunk[:800]
     
     # Process chunks in parallel
-    tasks = [summarize_chunk(i, chunk) for i, chunk in enumerate(chunks)]
-    part_summaries = await asyncio.gather(*tasks)
+    part_summaries = await asyncio.gather(*[summarize_chunk(i, chunk) for i, chunk in enumerate(chunks)])
     
     # Quick final combination
     combined = "\n\n".join(part_summaries)
-    if len(combined) <= 4000:
+    if len(combined) <= 3000:
         return combined
     
     # Final compression if needed
     try:
-        resp = openai_client.chat.completions.create(
+        resp = await asyncio.to_thread(
+            openai_client.chat.completions.create,
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Combine into 8-10 key bullets."},
+                {"role": "system", "content": "Combine into 6-8 key bullets."},
                 {"role": "user", "content": f"{title}:\n{combined}"}
             ],
             temperature=0.1,
-            max_tokens=800
+            max_tokens=600
         )
         return resp.choices[0].message.content.strip()
     except Exception:
-        return combined[:4000]
+        return combined[:3000]
 
 
-def fetch_weaviate_full_text(organization: str) -> str:
-    """Concatenate full text from all Weaviate policy objects (may be large)."""
-    objects = fetch_weaviate_policies(organization)
+async def fetch_weaviate_full_text(collection_name: str) -> str:
+    """Concatenate full text from all Weaviate policy objects"""
+    objects = fetch_weaviate_policies(collection_name)
     texts: List[str] = []
     for obj in objects:
         title = obj.properties.get("title", "Policy")
@@ -133,8 +149,8 @@ def fetch_weaviate_full_text(organization: str) -> str:
     return "\n\n\n".join(texts)
 
 
-
 async def extract_pdf_content(file: UploadFile):
+    """Async PDF content extraction"""
     try:
         await file.seek(0)
         text, title = await extract_content_from_uploadpdf(file)
@@ -144,6 +160,8 @@ async def extract_pdf_content(file: UploadFile):
                 detail="No text could be extracted from the PDF."
             )
         return text.strip(), title or "Untitled Document"
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -151,57 +169,210 @@ async def extract_pdf_content(file: UploadFile):
         )
 
 
-async def compare_summaries_with_llm(openai_client: OpenAI, pdf_summary: str, weaviate_summary: str) -> Dict[str, str]:
-    """Use LLM to compare two brief summaries and return alignment verdict and reasoning."""
-    prompt = (
-        "You will compare two brief summaries (A: Uploaded PDF, B: Stored Policies).\n"
-        "Decide whether they are aligned overall (ALIGNED or NOT_ALIGNED) and provide a short reasoning (max 6 lines).\n"
-        "Consider scope, obligations, processes, and standards.\n\n"
-        f"Summary A (PDF):\n{pdf_summary}\n\n"
-        f"Summary B (Policies):\n{weaviate_summary}\n\n"
-        "Return strict JSON: {\n  \"alignment_status\": \"ALIGNED|NOT_ALIGNED\",\n  \"reasoning\": \"...\"\n}"
-    )
+async def cosine_similarity_test(file: UploadFile, organization_type: str):
+    """Optimized cosine similarity with async execution"""
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    # Parallel execution
+    pdf_task = extract_pdf_content(file)
+    policies_task = asyncio.to_thread(fetch_weaviate_policies, organization_type)
+    
+    (full_text, _title), policies = await asyncio.gather(pdf_task, policies_task)
+    
     try:
-        resp = openai_client.chat.completions.create(
-            model="gpt-4o",
+        # Generate embedding
+        max_chars = 8192 * 3
+        if len(full_text) > max_chars:
+            embedding_text = (
+                full_text[:max_chars // 2]
+                + "\n\n[...CONTENT_TRUNCATED...]\n\n"
+                + full_text[-max_chars // 2:]
+            )
+        else:
+            embedding_text = full_text
+            
+        embedding_response = await asyncio.to_thread(
+            openai_client.embeddings.create,
+            model="text-embedding-3-small",
+            input=embedding_text
+        )
+        uploaded_embedding = embedding_response.data[0].embedding
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate embedding: {str(e)}"
+        )
+    
+    similarities = []
+    for policy_obj in policies:
+        policy_embedding = policy_obj.properties.get("embedding", [])
+        if policy_embedding:
+            similarity_score = cosine_similarity(uploaded_embedding, policy_embedding)
+            similarities.append(similarity_score)
+    
+    if not similarities:
+        raise HTTPException(
+            status_code=500,
+            detail="No valid embeddings found for comparison"
+        )
+    
+    max_similarity = max(similarities)
+    alignment_percent = round(max_similarity * 100, 2)
+    not_alignment_percent_cosine = round(100 - alignment_percent, 2)
+    
+    return {
+        "not_alignment_percent": not_alignment_percent_cosine
+    }
+
+
+async def combined_alignment_analysis(text: str, title: str, organization_type: str) -> Dict[str, object]:
+    """Ultra-fast parallel analysis with optimized OpenAI calls"""
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    # Step 1: Fetch Weaviate data (PDF text already provided)
+    weaviate_full_text = await fetch_weaviate_full_text(organization_type)
+
+    
+    # Step 2: Parallel summarization (text already extracted)
+    pdf_summary, weaviate_summary = await asyncio.gather(
+        summarize_large_text(openai_client, text, title),
+        summarize_large_text(openai_client, weaviate_full_text, "Main Laws")
+    )
+    
+    # Step 3: Single optimized LLM call for everything
+    combined_prompt = (
+        f"Analyze these policy summaries and provide a complete analysis:\n\n"
+        f"PDF Summary:\n{pdf_summary}\n\n"
+        f"Policy Summary:\n{weaviate_summary}\n\n"
+        f"Return strict JSON with this exact structure:\n"
+        f"{{\n"
+        f'  "direct_conflict": true or false,\n'
+        f'  "conflicts": ["conflict1", "conflict2", ...],\n'
+        f'  "differences": ["diff1", "diff2", ...],\n'
+        f'  "paragraph": "Single paragraph (4-6 sentences) explaining conflicts or key differences without mentioning system names."\n'
+        f"}}"
+    )
+    
+    try:
+        resp = await asyncio.to_thread(
+            openai_client.chat.completions.create,
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a precise policy analyst. Return strict JSON."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": "You are a precise policy analyst. Return only valid JSON."},
+                {"role": "user", "content": combined_prompt}
             ],
             temperature=0.1,
-            max_tokens=1500,
+            max_tokens=1000
+        )
+        
+        total_tokens = resp.usage.total_tokens
+        content = resp.choices[0].message.content.strip()
+        
+        # Clean JSON response
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.endswith("```"):
+            content = content[:-3]
+        
+        result = json.loads(content.strip())
+        
+        # Calculate alignment score
+        if result.get("direct_conflict", False):
+            conflict_count = len(result.get("conflicts", []))
+            not_alignment_percent = min(85 + (conflict_count * 5), 100)
+        else:
+            difference_count = len(result.get("differences", []))
+            not_alignment_percent = min(10 + (difference_count * 5), 35)
+        
+        return {
+            "not_alignment_percent": round(not_alignment_percent, 1),
+            "contradiction_paragraph": result.get("paragraph", "Analysis unavailable."),
+            "tokens_used": total_tokens
+        }
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse error: {str(e)}")
+        return {
+            "not_alignment_percent": 25.0,
+            "contradiction_paragraph": "Analysis completed but formatting error occurred.",
+            "tokens_used": 0
+        }
+    except Exception as e:
+        logger.warning(f"Combined analysis failed: {str(e)}")
+        return {
+            "not_alignment_percent": 25.0,
+            "contradiction_paragraph": "Analysis unavailable due to processing error.",
+            "tokens_used": 0
+        }
+
+
+async def summarize_pdf_and_policies(text: str, title: str, organization_type: str) -> Dict[str, str]:
+    """Fast parallel summarization of PDF and policies"""
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    # Fetch Weaviate data (PDF text already provided)
+    weaviate_full_text = await asyncio.to_thread(fetch_weaviate_full_text, organization_type)
+    
+    # Parallel summarization
+    pdf_summary, weaviate_summary = await asyncio.gather(
+        summarize_large_text(openai_client, text, title),
+        summarize_large_text(openai_client, weaviate_full_text, "Main Policies")
+    )
+    
+    return {
+        "pdf_summary": pdf_summary,
+        "weaviate_summary": weaviate_summary,
+    }
+
+
+# Legacy sync functions kept for backwards compatibility
+async def compare_summaries_with_llm(openai_client: OpenAI, pdf_summary: str, weaviate_summary: str) -> Dict[str, str]:
+    """Legacy function - use combined_alignment_analysis instead"""
+    prompt = (
+        "Compare two summaries (A: PDF, B: Policies).\n"
+        "Decide alignment (ALIGNED or NOT_ALIGNED) with short reasoning (max 6 lines).\n\n"
+        f"Summary A:\n{pdf_summary}\n\n"
+        f"Summary B:\n{weaviate_summary}\n\n"
+        "Return JSON: {{\"alignment_status\": \"ALIGNED|NOT_ALIGNED\", \"reasoning\": \"...\"}}"
+    )
+    try:
+        resp = await asyncio.to_thread(
+            openai_client.chat.completions.create,
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Return strict JSON only."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=800
         )
         content = resp.choices[0].message.content.strip()
         obj = json.loads(content)
-        status = obj.get("alignment_status", "UNKNOWN")
-        reasoning = obj.get("reasoning", "")
-        return {"alignment_status": status, "reasoning": reasoning}
+        return {
+            "alignment_status": obj.get("alignment_status", "UNKNOWN"),
+            "reasoning": obj.get("reasoning", "")
+        }
     except Exception as e:
-        logger.warning(f"Summary comparison failed: {str(e)}")
+        logger.warning(f"Comparison failed: {str(e)}")
         return {"alignment_status": "UNKNOWN", "reasoning": "Comparison failed."}
 
 
 async def detect_conflicts_or_differences(openai_client: OpenAI, pdf_summary: str, weaviate_summary: str) -> Dict[str, object]:
-    """Use LLM to extract direct conflicts if any; otherwise list key differences. Returns JSON."""
+    """Legacy function - use combined_alignment_analysis instead"""
     prompt = (
-        "Read Summary A (PDF) and Summary B (Policies).\n"
-        "1) If there are any DIRECT CONFLICTS (requirements that cannot both be true), list 1-8 concise conflict items.\n"
-        "2) If there are NO direct conflicts, list 3-8 concise differences (scope, wording, thresholds, processes) and explicitly say no direct conflicts.\n"
-        "Keep each item short (one sentence).\n\n"
-        f"Summary A (PDF):\n{pdf_summary}\n\n"
-        f"Summary B (Policies):\n{weaviate_summary}\n\n"
-        "Return strict JSON only in this schema:\n"
-        "{\n  \"direct_conflict\": true|false,\n  \"conflicts\": [\"...\"],\n  \"differences\": [\"...\"],\n  \"note\": \"If false, mention there is no direct conflict.\"\n}"
+        f"Analyze summaries for conflicts:\nPDF: {pdf_summary}\nPolicies: {weaviate_summary}\n"
+        f"Return JSON: {{\"direct_conflict\": true/false, \"conflicts\": [...], \"differences\": [...]}}"
     )
     try:
-        resp = openai_client.chat.completions.create(
-            model="gpt-4o",
+        resp = await asyncio.to_thread(
+            openai_client.chat.completions.create,
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a precise compliance analyst. Return strict JSON."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": "Return strict JSON."},
+                {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=1500,
+            max_tokens=800
         )
         content = resp.choices[0].message.content.strip()
         obj = json.loads(content)
@@ -212,160 +383,28 @@ async def detect_conflicts_or_differences(openai_client: OpenAI, pdf_summary: st
             "note": obj.get("note", "")
         }
     except Exception as e:
-        logger.warning(f"Conflict/difference detection failed: {str(e)}")
-        return {
-            "direct_conflict": False,
-            "conflicts": [],
-            "differences": [],
-            "note": "Analysis failed."
-        }
+        logger.warning(f"Detection failed: {str(e)}")
+        return {"direct_conflict": False, "conflicts": [], "differences": [], "note": "Failed."}
 
 
 async def generate_contradiction_paragraph(openai_client: OpenAI, pdf_summary: str, weaviate_summary: str) -> str:
-    """Produce a single concise paragraph summarizing contradictions; if none, state no direct conflict and key differences."""
+    """Legacy function - use combined_alignment_analysis instead"""
     prompt = (
-        "Compose ONE concise paragraph (4-7 sentences) that summarizes any DIRECT contradictions between: \n"
-        "A) the uploaded PDF summary and B) the main policies. \n"
-        "If there are NO direct contradictions, explicitly state that and highlight the main differences in scope, thresholds, or processes, still within one paragraph. \n"
-        "Do NOT mention any platform or system names (e.g., Weaviate). \n"
-        "Avoid lists. Be specific but brief.\n\n"
-        f"Summary A (PDF):\n{pdf_summary}\n\n"
-        f"Summary B (Policies):\n{weaviate_summary}"
+        f"ONE paragraph (4-6 sentences) on contradictions between:\n"
+        f"PDF: {pdf_summary}\nPolicies: {weaviate_summary}"
     )
     try:
-        resp = openai_client.chat.completions.create(
-            model="gpt-4o",
+        resp = await asyncio.to_thread(
+            openai_client.chat.completions.create,
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You write precise compliance summaries in a single paragraph."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": "Single paragraph only."},
+                {"role": "user", "content": prompt}
             ],
             temperature=0.2,
-            max_tokens=700,
+            max_tokens=500
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
-        logger.warning(f"Contradiction paragraph generation failed: {str(e)}")
+        logger.warning(f"Paragraph generation failed: {str(e)}")
         return "Analysis unavailable."
-
-
-
-from app.config import OPENAI_API_KEY
-from openai import OpenAI
-
-async def cosine_similarity_test(file: UploadFile, organization: str = "GlobalLaw"):
-    full_text, _title = await extract_pdf_content(file)
-    try:
-        openai_client = OpenAI(api_key=OPENAI_API_KEY)
-        max_chars = 8192 * 3
-        if len(full_text) > max_chars:
-            embedding_text = (
-                full_text[:max_chars // 2]
-                + "\n\n[...CONTENT_TRUNCATED...]\n\n"
-                + full_text[-max_chars // 2:]
-            )
-        else:
-            embedding_text = full_text
-        embedding_response = openai_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=embedding_text
-        )
-        uploaded_embedding = embedding_response.data[0].embedding
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate embedding: {str(e)}"
-        )
-    policies = fetch_weaviate_policies(organization)
-    similarities = []
-    for policy_obj in policies:
-        policy_embedding = policy_obj.properties.get("embedding", [])
-        if policy_embedding:
-            similarity_score = cosine_similarity(uploaded_embedding, policy_embedding)
-            similarities.append(similarity_score)
-    if not similarities:
-        raise HTTPException(
-            status_code=500,
-            detail="No valid embeddings found for comparison"
-        )
-    max_similarity = max(similarities)
-    alignment_percent = round(max_similarity * 100, 2)
-    not_alignment_percent_cosine = round(100 - alignment_percent, 2)
-    return {
-        "not_alignment_percent": not_alignment_percent_cosine
-    }
-
-
-import asyncio
-
-async def combined_alignment_analysis(file: UploadFile, organization: str = "GlobalLaw") -> Dict[str, object]:
-    """Fast parallel analysis with optimized LLM calls."""
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
-    
-    # Parallel execution of PDF extraction and Weaviate fetch
-    pdf_task = extract_pdf_content(file)
-    weaviate_task = asyncio.create_task(asyncio.to_thread(fetch_weaviate_full_text, organization))
-    
-    full_text, pdf_title = await pdf_task
-    weaviate_full_text = await weaviate_task
-    
-    # Parallel summarization
-    pdf_summary_task = summarize_large_text(openai_client, full_text, pdf_title)
-    weaviate_summary_task = summarize_large_text(openai_client, weaviate_full_text, "Main Policies")
-    
-    pdf_summary, weaviate_summary = await asyncio.gather(pdf_summary_task, weaviate_summary_task)
-    
-    # Single LLM call for both conflict detection and paragraph generation
-    combined_prompt = (
-        f"Analyze these summaries for conflicts and generate response:\n"
-        f"PDF: {pdf_summary}\n\nPolicies: {weaviate_summary}\n\n"
-        f"Return JSON: {{\"direct_conflict\": true/false, \"conflicts\": [...], "
-        f"\"differences\": [...], \"paragraph\": \"single paragraph summary\"}}"
-    )
-    
-    try:
-        resp = openai_client.chat.completions.create(
-            model="gpt-4o-mini",  # Faster model
-            messages=[
-                {"role": "system", "content": "Return strict JSON only."},
-                {"role": "user", "content": combined_prompt}
-            ],
-            temperature=0.1,
-            max_tokens=1000
-        )
-        result = json.loads(resp.choices[0].message.content.strip())
-        
-        # Calculate score
-        if result.get("direct_conflict", False):
-            conflict_count = len(result.get("conflicts", []))
-            not_alignment_percent = min(85 + (conflict_count * 5), 100)
-        else:
-            difference_count = len(result.get("differences", []))
-            not_alignment_percent = min(10 + (difference_count * 5), 35)
-        
-        return {
-            "not_alignment_percent": round(not_alignment_percent, 1),
-            "contradiction_paragraph": result.get("paragraph", "Analysis unavailable.")
-        }
-    except Exception as e:
-        logger.warning(f"Combined analysis failed: {str(e)}")
-        return {
-            "not_alignment_percent": 25.0,
-            "contradiction_paragraph": "Analysis unavailable due to processing error."
-        }
-
-
-async def summarize_pdf_and_policies(file: UploadFile, organization: str = "PolicyEmbeddings") -> Dict[str, str]:
-    """Return brief summaries for the uploaded PDF and all Weaviate policies."""
-    # Extract and summarize PDF
-    full_text, pdf_title = await extract_pdf_content(file)
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
-    pdf_summary = await summarize_large_text(openai_client, full_text, pdf_title)
-
-    # Fetch, concatenate, and summarize Weaviate texts
-    weaviate_full_text = fetch_weaviate_full_text(organization)
-    weaviate_summary = await summarize_large_text(openai_client, weaviate_full_text, "Main Policies")
-
-    return {
-        "pdf_summary": pdf_summary,
-        "weaviate_summary": weaviate_summary,
-    }

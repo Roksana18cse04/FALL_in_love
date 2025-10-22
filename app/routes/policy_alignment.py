@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.services.policy_comparison_service import cosine_similarity_test, summarize_pdf_and_policies, combined_alignment_analysis
 import logging
-from app.config import GLOBAL_ORG
+from app.services.extract_plain_text_from_html import extract_plain_text
 
 router = APIRouter()
 
@@ -10,17 +10,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @router.post("/user/check-policy-alignment")
-async def check_policy_alignment(file: UploadFile = File(...)):
-    """Policy alignment analysis (cosine + LLM summary comparison)."""
-    logger.info(f"Processing file: {file.filename}, size: {file.size} bytes")
-    
+async def check_policy_alignment(title: str, html_text: str, organization_type: str = "General"):
+    """Policy alignment analysis with specific law type comparison."""
+    logger.info(f"Processing text for {organization_type} law alignment")
+    text = await extract_plain_text(html_text)
     try:
-        result = await combined_alignment_analysis(file, GLOBAL_ORG)
-        logger.info(f"Combined policy alignment analysis completed for {file.filename}")
+        result = await combined_alignment_analysis(text, title, organization_type)
+        logger.info(f"Law alignment analysis completed for {title}")
         return result
         
     except Exception as e:
-        logger.error(f"Policy alignment analysis failed for {file.filename}: {str(e)}")
+        logger.error(f"Policy alignment analysis failed for {title}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 
