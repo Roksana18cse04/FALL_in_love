@@ -7,7 +7,7 @@ from app.services.bot import ask_doc_bot
 router = APIRouter()
 
 class ChatRequest(BaseModel):
-    organization: str = Field(default="HomeCare", description="Organization name")
+    organization_id: str = Field(default="1", description="Organization ID")
     question: str = Field(..., min_length=1, description="User's question")
     auth_token: str = Field(..., min_length=1, description="Authentication token")
 
@@ -31,8 +31,9 @@ class ChatRequest(BaseModel):
 async def chatbot(request: ChatRequest):
     try:
         # ask_doc_bot already returns a JSONResponse
-        return await ask_doc_bot(request.question, request.organization, request.auth_token)
-    
+        organization = "Org_" + request.organization_id
+        return await ask_doc_bot(request.question, organization, request.auth_token)
+
     except Exception as e:
         return JSONResponse(
             status_code=500,
