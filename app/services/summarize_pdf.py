@@ -43,8 +43,8 @@ def chunk_text(text, max_chars=6000):
     
     return chunks
 
-async def summarize_chunk_with_gpt4(text_chunk, chunk_num, total_chunks):
-    """Summarize a single chunk of text"""
+async def summarize_chunk_with_gpt4(text_chunk, chunk_num, total_chunks, timeout=120):
+    """Summarize a single chunk of text with timeout"""
     
     api_key = os.getenv("OPENAI_API_KEY")
     
@@ -62,32 +62,75 @@ async def summarize_chunk_with_gpt4(text_chunk, chunk_num, total_chunks):
         Provide a brief summary focusing on the key points in this section.
         """
         
-        async with AsyncOpenAI(api_key=api_key) as client:
-            response = await client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                temperature=0.3
+        async with AsyncOpenAI(api_key=api_key, timeout=timeout) as client:
+            response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=500,
+                    temperature=0.3
+                ),
+                timeout=timeout
             )
         return response.choices[0].message.content
         
+    except asyncio.TimeoutError:
+        print(f"Timeout error for chunk {chunk_num} after {timeout} seconds")
+        return None
     except Exception as e:
         print(f"Error calling GPT-4 API for chunk {chunk_num}: {e}")
         return None
 
-async def summarize_with_gpt4(text, title):
+async def summarize_with_gpt4_with_retry(text, title, max_retries=3, base_timeout=120):
+    """
+    Summarize with retry logic and exponential backoff
+    """
+    last_error = None
+    
+    for attempt in range(max_retries):
+        timeout = base_timeout * (2 ** attempt)  # 120s, 240s, 480s
+        try:
+            print(f"Attempt {attempt + 1}/{max_retries} with timeout {timeout}s")
+            result = await summarize_with_gpt4(text, title, timeout=timeout)
+            
+            if result.get('summary'):
+                return result
+            else:
+                last_error = result.get('message', 'Unknown error')
+                
+        except asyncio.TimeoutError:
+            last_error = f"Request timed out after {timeout} seconds"
+            print(f"Attempt {attempt + 1} timed out")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)  # Wait before retry: 1s, 2s, 4s
+        except Exception as e:
+            last_error = str(e)
+            print(f"Attempt {attempt + 1} failed with error: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+    
+    return {
+        "summary": None,
+        "message": f"Failed after {max_retries} attempts. Last error: {last_error}",
+        "used_tokens": 0
+    }
+
+async def summarize_with_gpt4(text, title, timeout=300):
     """Summarize the extracted text using GPT-4 with chunking for large documents"""
     
     api_key = os.getenv("OPENAI_API_KEY")
     
     if not api_key:
-        print("Error: OPENAI_API_KEY not found in environment variables")
-        return None
+        error_msg = "OPENAI_API_KEY not found in environment variables"
+        print(f"Error: {error_msg}")
+        return {"summary": None, "message": error_msg, "used_tokens": 0}
     
     try:
+        total_tokens = 0
+        
         if len(text) > 6000:
             print(f"Text is too long ({len(text)} characters). Splitting into chunks...")
             
@@ -95,11 +138,32 @@ async def summarize_with_gpt4(text, title):
             print(f"Split into {len(chunks)} chunks")
             
             chunk_summaries = []
+            failed_chunks = []
+            
+            # Process chunks with individual timeouts
             for i, chunk in enumerate(chunks, 1):
                 print(f"Summarizing chunk {i}/{len(chunks)}...")
-                chunk_summary = await summarize_chunk_with_gpt4(chunk, i, len(chunks))
-                if chunk_summary:
-                    chunk_summaries.append(chunk_summary)
+                try:
+                    chunk_summary = await summarize_chunk_with_gpt4(
+                        chunk, i, len(chunks), timeout=timeout
+                    )
+                    if chunk_summary:
+                        chunk_summaries.append(chunk_summary)
+                    else:
+                        failed_chunks.append(i)
+                except Exception as e:
+                    print(f"Failed to summarize chunk {i}: {e}")
+                    failed_chunks.append(i)
+            
+            if not chunk_summaries:
+                return {
+                    "summary": None,
+                    "message": "All chunks failed to summarize",
+                    "used_tokens": 0
+                }
+            
+            if failed_chunks:
+                print(f"Warning: Failed to summarize chunks: {failed_chunks}")
             
             combined_summaries = "\n\n".join(chunk_summaries)
             
@@ -113,22 +177,25 @@ async def summarize_with_gpt4(text, title):
             Please provide:
             An executive summary of the document with one paragraph
             
-            
             Format the summary in a clear, structured manner.
             """
             
-            async with AsyncOpenAI(api_key=api_key) as client:
-                response = await client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries of documents."},
-                        {"role": "user", "content": final_prompt}
-                    ],
-                    max_tokens=1500,
-                    temperature=0.3
+            async with AsyncOpenAI(api_key=api_key, timeout=timeout) as client:
+                response = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries of documents."},
+                            {"role": "user", "content": final_prompt}
+                        ],
+                        max_tokens=1500,
+                        temperature=0.3
+                    ),
+                    timeout=timeout
                 )
 
             summary_content = response.choices[0].message.content
+            total_tokens = response.usage.total_tokens
 
         else:
             prompt = f"""
@@ -140,29 +207,42 @@ async def summarize_with_gpt4(text, title):
             Please provide:
             An executive summary of the document with one paragraph
            
-            
             Format the summary in a clear, structured manner.
             """
             
             print("Generating summary with GPT-4...")
             
-            async with AsyncOpenAI(api_key=api_key) as client:
-                response = await client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries of documents."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=1500,
-                    temperature=0.3
+            async with AsyncOpenAI(api_key=api_key, timeout=timeout) as client:
+                response = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": "You are a helpful assistant that creates clear, concise summaries of documents."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        max_tokens=1500,
+                        temperature=0.3
+                    ),
+                    timeout=timeout
                 )
+            
             summary_content = response.choices[0].message.content
+            total_tokens = response.usage.total_tokens
 
-        return {"summary": summary_content, "used_tokens": response.usage.total_tokens}
+        return {
+            "summary": summary_content,
+            "used_tokens": total_tokens,
+            "message": "Success"
+        }
 
+    except asyncio.TimeoutError:
+        error_msg = f"Request timed out after {timeout} seconds"
+        print(f"Error: {error_msg}")
+        return {"summary": None, "message": error_msg, "used_tokens": 0}
     except Exception as e:
-        print(f"Error calling GPT-4 API: {e}")
-        return {"message": str(e), "summary": None, "used_tokens": 0}
+        error_msg = f"Error calling GPT-4 API: {str(e)}"
+        print(error_msg)
+        return {"summary": None, "message": error_msg, "used_tokens": 0}
 
 async def main():
     pdf_path = "app/data/provider-registration-policy.pdf"
@@ -180,19 +260,21 @@ async def main():
         print(f"Title: {title}")
         print(f"Extracted text length: {len(text)} characters")
         
-        summary = await summarize_with_gpt4(text, title)
+        # Use the retry version for better reliability
+        result = await summarize_with_gpt4_with_retry(text, title)
         
-        if summary:
+        if result.get('summary'):
             print("\n" + "="*80)
             print("SUMMARY:")
             print("="*80)
-            print(summary)
+            print(result['summary'])
             print("="*80)
+            print(f"\nTokens used: {result['used_tokens']}")
         else:
-            print("Failed to generate summary.")
+            print(f"Failed to generate summary: {result.get('message')}")
             
     except Exception as e:
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

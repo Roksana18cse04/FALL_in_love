@@ -33,6 +33,72 @@ def calculate_pages(word_count: int) -> float:
     return word_count / WORDS_PER_PAGE
 
 
+def select_relevant_law_content(law_content: str, query: str, max_chars: int = 8000) -> str:
+    """
+    Select most relevant law content with improved algorithm
+    """
+    if not law_content:
+        return "Standard regulatory framework"
+    
+    if len(law_content) <= max_chars:
+        return law_content
+    
+    # Extract keywords from query
+    query_keywords = [kw.lower() for kw in query.split() if len(kw) > 2]
+    
+    # Split into paragraphs and sentences for better granularity
+    paragraphs = [p.strip() for p in law_content.split('\n\n') if p.strip()]
+    
+    if not paragraphs:
+        # Fallback: take first max_chars
+        return law_content[:max_chars] + "..."
+    
+    # Score paragraphs
+    scored_paragraphs = []
+    for para in paragraphs:
+        if len(para) < 50:  # Skip very short paragraphs
+            continue
+            
+        score = 0
+        para_lower = para.lower()
+        
+        # Query keyword matches (higher weight)
+        for keyword in query_keywords:
+            score += para_lower.count(keyword) * 3
+        
+        # Legal importance terms
+        legal_terms = ['requirement', 'compliance', 'regulation', 'standard', 'procedure', 
+                      'mandatory', 'shall', 'must', 'policy', 'guideline', 'framework']
+        for term in legal_terms:
+            score += para_lower.count(term)
+        
+        # Prefer paragraphs with structure indicators
+        if any(indicator in para_lower for indicator in ['section', 'article', 'clause', 'subsection']):
+            score += 2
+            
+        scored_paragraphs.append((score, para))
+    
+    # Sort by relevance
+    scored_paragraphs.sort(key=lambda x: x[0], reverse=True)
+    
+    # Select top paragraphs within character limit
+    selected_content = ""
+    used_chars = 0
+    
+    for score, para in scored_paragraphs:
+        if used_chars + len(para) + 4 <= max_chars:
+            selected_content += para + "\n\n"
+            used_chars += len(para) + 4
+        elif used_chars < max_chars * 0.8:  # If we haven't used 80% of limit, try partial
+            remaining = max_chars - used_chars - 4
+            if remaining > 200:  # Only if meaningful content can fit
+                selected_content += para[:remaining] + "...\n\n"
+                break
+    
+    result = selected_content.strip()
+    return result if result else law_content[:max_chars] + "..."
+
+
 def convert_markdown_to_inline_html(markdown_content: str) -> str:
     """
     Convert markdown to HTML with inline styles (no embedded <style> tags)
@@ -98,10 +164,14 @@ async def generate_policy_html(title: str, context: str, organization_type: str,
         
         try:
             vector_service = PolicyVectorService(organization_type)
-            super_admin_law_content = await vector_service.get_super_admin_laws_for_generation(
-                query=query, limit=20
+            full_law_content = await vector_service.get_super_admin_laws_for_generation(
+                query=query, limit=5
             )
-            print(f"Retrieved law content: {len(super_admin_law_content)} characters")
+            # Select most relevant law content based on query
+            super_admin_law_content = select_relevant_law_content(
+                full_law_content, query, 6000
+            ) if full_law_content else "Standard regulatory framework"
+            print(f"Retrieved law content: {len(full_law_content)} characters, using: {len(super_admin_law_content)} characters")
         except Exception as e:
             print(f"Vector service error (using fallback): {e}")
         
@@ -127,9 +197,11 @@ Format Requirements:
 - Write in professional, formal tone
 - Include specific procedures and requirements
 
+IMPORTANT: Ensure the policy STRICTLY COMPLIES with the legal framework provided below. Do not contradict any legal requirements.
+
 Legal Framework: {super_admin_law_content[:2000] if super_admin_law_content else 'Standard regulatory framework'}
 
-Generate the complete policy document in markdown format.
+Generate the complete policy document in markdown format that fully aligns with the above legal framework.
 """
         
         response = openai_client.chat.completions.create(
@@ -141,7 +213,7 @@ Generate the complete policy document in markdown format.
             temperature=0.1,
             max_tokens=4000
         )
-        
+        used_tokens = response.usage.total_tokens if response.usage else 0
         markdown_content = response.choices[0].message.content.strip()
         
         # Convert markdown to HTML with inline styles
@@ -157,7 +229,7 @@ Generate the complete policy document in markdown format.
             "word_count": final_word_count,
             "success": True,
             "error_message": None,
-            "original_context": f"{title} - {context}"
+            "used_tokens": used_tokens
         }
         
     except Exception as e:
@@ -184,12 +256,16 @@ async def generate_policy_with_vector_laws(organization_type: str, title: str, c
         
         try:
             vector_service = PolicyVectorService(organization_type)
-            super_admin_law_content = await vector_service.get_super_admin_laws_for_generation(
+            full_law_content = await vector_service.get_super_admin_laws_for_generation(
                 query=query,
                 version=version,
-                limit=40
+                limit=5
             )
-            print(f"Retrieved law content: {len(super_admin_law_content)} characters")
+            # Select most relevant law content based on query
+            super_admin_law_content = select_relevant_law_content(
+                full_law_content, query, 8000
+            ) if full_law_content else "Standard regulatory framework"
+            print(f"Retrieved law content: {len(full_law_content)} characters, using: {len(super_admin_law_content)} characters")
         except Exception as e:
             print(f"Vector service error (using fallback): {e}")
         
@@ -223,9 +299,11 @@ Format Requirements:
 - Write in professional, formal tone
 - Include specific procedures and requirements
 
-Legal Framework: {super_admin_law_content[:2000]}
+IMPORTANT: Ensure the policy STRICTLY COMPLIES with the legal framework provided below. Do not contradict any legal requirements.
 
-Generate the complete policy document in markdown format.
+Legal Framework: {super_admin_law_content}
+
+Generate the complete policy document in markdown format that fully aligns with the above legal framework.
 """
         
         response = openai_client.chat.completions.create(

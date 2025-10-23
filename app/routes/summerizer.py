@@ -8,7 +8,6 @@ from app.services.s3_manager import S3Manager
 from fastapi.responses import JSONResponse
 import asyncio
 from app.services.policy_comparison_service import combined_alignment_analysis
-from app.config import GLOBAL_ORG
 from pydantic import BaseModel
 
 router = APIRouter()
