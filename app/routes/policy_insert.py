@@ -4,23 +4,30 @@ from pydantic import BaseModel
 from weaviate.exceptions import UnexpectedStatusCodeError
 
 class Document(BaseModel):
-    organization: str = "HomeCare"
+    organization_id: str
     doc_id: str = "6"
     document_type: str = "policy"
     category: str
-    object_key: str = "AI/policy/privacy_confidentiality_information_governance/provider-registration-policy.pdf"
+    title: str
+    version_id: str = "1"
+    version_number: int = 1
+    content: str
     
 router = APIRouter()
 
 @router.post("/insert-document")
 async def insert_document_endpoint(request: Document):
     try:
+        organization = "org_" + request.organization_id
         response = await weaviate_insertion(
-            request.organization,
+            organization,
             request.doc_id,
             request.document_type,
-            request.object_key,
-            request.category
+            request.content,
+            request.category,
+            request.title,
+            request.version_id,
+            request.version_number
         )
         return response
     except UnexpectedStatusCodeError as e:

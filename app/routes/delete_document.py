@@ -12,19 +12,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 class DeleteDocumentRequest(BaseModel):
-    organization: str = "HomeCare"
-    object_key: str
-    version: str = "v1"
+    organization_id: str
+    document_id: str = "6"
+    version_id: str = "1"
 
 @router.delete("/delete-document")
 async def delete_document_endpoint(
     request: DeleteDocumentRequest
 ):
     try:
+        organization = "Org_" + request.organization_id
         response = await delete_weaviate_data(
-            request.organization,
-            request.object_key,
-            request.version
+            organization,
+            request.document_id,
+            request.version_id
         )
         logger.info("Deletion response: %s", response)
         return response

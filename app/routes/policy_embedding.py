@@ -224,7 +224,7 @@ class PolicyDeletionRequest(BaseModel):
     version: str
     filename: str
 
-@router.get("/admin/delete-law")
+@router.delete("/admin/delete-law")
 async def delete_law(request: PolicyDeletionRequest):
     response = await delete_weaviate_law(request.version, request.filename)
     return response

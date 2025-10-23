@@ -38,7 +38,6 @@ async def create_schema(organization: str):
                     max_connections=64
 
                 ),
-                
                 properties=[
                     Property(
                         name="document_id",
@@ -65,22 +64,21 @@ async def create_schema(organization: str):
                         tokenization=Tokenization.WORD
                     ),
                     Property(
-                        name="version",
+                        name="version_id",
                         data_type=DataType.TEXT,
                         vectorize_property_name=False,
                         tokenization=Tokenization.WORD
+                    ),
+                    Property(
+                        name="version_number",
+                        data_type=DataType.INT,
+                        vectorize_property_name=False
                     ),
                     Property(
                         name="data", 
                         data_type=DataType.TEXT,
                         vectorize_property_name=False,
                         tokenization=Tokenization.WORD
-                    ),
-                    Property(
-                        name="source", 
-                        data_type=DataType.TEXT,
-                        vectorize_property_name=False,
-                        tokenization=Tokenization.FIELD  # field for exact matching
                     ),
                     Property(name="created_at", data_type=DataType.DATE),
                     Property(name="last_updated", data_type=DataType.DATE)
@@ -129,10 +127,4 @@ async def delete_schema(organization: str):
         if client.is_connected():
             client.close()
 
-import asyncio
-if __name__ == "__main__":
-    asyncio.run(create_schema("HomeCare"))
-    print("Schema creation script executed.")
-
-    # # delete the schema if needed then create_schema function will be commented
     

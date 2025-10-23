@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from uuid import uuid5, NAMESPACE_URL
 import os
 from weaviate.classes.query import Filter
+from app.services.extract_plain_text_from_html import extract_plain_text
 
 s3 = S3Manager()
 
@@ -58,24 +59,41 @@ async def get_next_version(client, collection_name, title):
     return f"v{next_version}"
 
 
-async def weaviate_insertion(organization, doc_db_id, document_type, document_object_key, category):
+async def delete_existing_document_by_id_and_version(client, collection_name, doc_db_id, version_id):
+    """Delete existing document chunks with the same document_id and version_id"""
+    collection = client.collections.get(collection_name)
+    
+    # Find existing documents with same document_id and version_id
+    results = collection.query.fetch_objects(
+        filters=Filter.by_property("document_id").equal(str(doc_db_id)) & 
+                Filter.by_property("version_id").equal(str(version_id))
+    )
+    
+    # Delete existing chunks
+    for obj in results.objects:
+        collection.data.delete_by_id(obj.uuid)
+    
+    return len(results.objects)
+
+
+async def weaviate_insertion(organization, doc_db_id, document_type, content, category, title, version_id, version_number):
     client = get_weaviate_client()
     try:
-        temp_file_path = s3.download_document(document_object_key)
-        if not temp_file_path:
-            return JSONResponse(status_code=404, content={
-                "status": "error",
-                "message": "Failed to download file"
-            })
-
-        data, title = await extract_content_from_pdf(temp_file_path)
+        data = await extract_plain_text(content)
         chunks = chunk_text(data)
-        version = await get_next_version(client, organization, title)
-        document_id = uuid5(NAMESPACE_URL, f"{document_object_key}-{version}")
+        print(f"Document split into {len(chunks)} chunks.")
+        
+        # Check and delete existing document with same document_id and version_id
+        deleted_count = await delete_existing_document_by_id_and_version(client, organization, doc_db_id, version_id)
+        if deleted_count > 0:
+            print(f"Updated existing document ID '{doc_db_id}' version '{version_id}' to title '{title}' (deleted {deleted_count} old chunks)")
+            action = "updated"
+        else:
+            print(f"Inserting new document '{title}' with ID '{doc_db_id}' version '{version_id}'")
+            action = "inserted"
 
-        # Insert chunks
+        # Insert new chunks
         for idx, chunk in enumerate(chunks):
-            chunk_uuid = uuid5(document_id, f"chunk-{idx}")
             try:
                 collection = client.collections.get(organization)
                 collection.data.insert(
@@ -84,23 +102,21 @@ async def weaviate_insertion(organization, doc_db_id, document_type, document_ob
                         "document_type": document_type,
                         "title": title,
                         "category": category,
-                        "source": document_object_key,
-                        "version": version,
+                        "version_id": version_id,
+                        "version_number": version_number,
                         "data": chunk,
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "last_updated": datetime.now(timezone.utc).isoformat()
-                    },
-                    uuid=str(chunk_uuid)
+                    }
                 )
             except Exception as e:
                 raise e
 
-        os.remove(temp_file_path)
         return JSONResponse(
             status_code=201,
             content={
                 "status": "success",
-                "message": f"Document '{title}' inserted successfully with version {version}."
+                "message": f"Document '{title}' {action} successfully with version {version_number}."
             }
         )
     
