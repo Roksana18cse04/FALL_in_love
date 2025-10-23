@@ -56,7 +56,7 @@ async def get_summary_and_category_endpoint(request: SummaryRequest):
         total_used_tokens = summary_used_tokens + classify_response['used_tokens'] + alignment_tokens
 
         # save summary used token
-        token_response = used_token_store(type= 'summarization', used_tokens=total_used_tokens, auth_token=auth_token)
+        token_response = used_token_store(type= 'summarization', used_tokens=total_used_tokens, auth_token=request.auth_token)
         if token_response.status_code != 201:
             return JSONResponse(status_code=500, content={
             "status": "error",
