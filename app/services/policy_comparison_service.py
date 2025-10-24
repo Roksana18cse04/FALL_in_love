@@ -138,14 +138,29 @@ async def summarize_large_text(openai_client: OpenAI, text: str, title: str) -> 
 
 
 async def fetch_weaviate_full_text(collection_name: str) -> str:
-    """Concatenate full text from all Weaviate policy objects"""
-    objects = fetch_weaviate_policies(collection_name)
+    """Concatenate full text from organization-specific and general policies"""
+    # Fetch organization-specific policies
+    org_objects = fetch_weaviate_policies(collection_name)
+    
+    # Fetch general policies from GeneralLaw collection
+    general_objects = fetch_weaviate_policies('GeneralLaw')
+    
     texts: List[str] = []
-    for obj in objects:
+    
+    # Add organization-specific policies
+    for obj in org_objects:
         title = obj.properties.get("title", "Policy")
         text = obj.properties.get("text", "")
         if text:
             texts.append(f"Title: {title}\n{text}")
+    
+    # Add general policies
+    for obj in general_objects:
+        title = obj.properties.get("title", "General Policy")
+        text = obj.properties.get("text", "")
+        if text:
+            texts.append(f"Title: {title}\n{text}")
+    
     return "\n\n\n".join(texts)
 
 
@@ -170,14 +185,20 @@ async def extract_pdf_content(file: UploadFile):
 
 
 async def cosine_similarity_test(file: UploadFile, organization_type: str):
-    """Optimized cosine similarity with async execution"""
+    """Optimized cosine similarity with async execution against org and general policies"""
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     
-    # Parallel execution
+    # Parallel execution for both org and general policies
     pdf_task = extract_pdf_content(file)
-    policies_task = asyncio.to_thread(fetch_weaviate_policies, organization_type)
+    org_policies_task = asyncio.to_thread(fetch_weaviate_policies, organization_type)
+    general_policies_task = asyncio.to_thread(fetch_weaviate_policies, 'GeneralLaw')
     
-    (full_text, _title), policies = await asyncio.gather(pdf_task, policies_task)
+    (full_text, _title), org_policies, general_policies = await asyncio.gather(
+        pdf_task, org_policies_task, general_policies_task
+    )
+    
+    # Combine both policy sets
+    policies = org_policies + general_policies
     
     try:
         # Generate embedding
