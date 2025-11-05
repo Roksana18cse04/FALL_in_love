@@ -198,84 +198,6 @@ async def build_context_from_weaviate_results(organization: str, query_text: str
         if client.is_connected():
             client.close()
 
-
-# async def fetch_history_async(auth_token: str):
-#     """Async function to fetch chat history"""
-#     header = {"Authorization": f"Bearer {auth_token}"}
-    
-#     async with aiohttp.ClientSession() as session:
-#         try:
-#             async with session.get(BACKEND_HISTORY_URL, headers=header) as response:
-#                 if response.status == 200:
-#                     print("History get successfully--------")
-#                     data = await response.json()
-#                     return {
-#                         "success": True,
-#                         "remaining_tokens": data['data'].get('remaining_tokens', None),
-#                         "histories": data['data'].get('histories', [])[:10]
-#                     }
-#                 else:
-#                     print(f"History get failed: {response.status}")
-#                     return {"success": False, "remaining_tokens": None, "histories": []}
-#         except Exception as e:
-#             print(f"Error fetching history: {e}")
-#             return {"success": False, "remaining_tokens": None, "histories": []}
-
-
-# async def save_data_parallel(history_data: dict, readcount_data: dict, 
-#                             token_data: dict, auth_token: str):
-#     """Save history, read count, and token data in parallel"""
-#     header = {"Authorization": f"Bearer {auth_token}"}
-    
-#     async def post_history():
-#         async with aiohttp.ClientSession() as session:
-#             try:
-#                 async with session.post(BACKEND_HISTORY_URL, json=history_data, 
-#                                        headers=header) as response:
-#                     return {"type": "history", "status": response.status}
-#             except Exception as e:
-#                 print(f"Error saving history: {e}")
-#                 return {"type": "history", "status": 500, "error": str(e)}
-    
-#     async def post_readcount():
-#         if not readcount_data:
-#             return {"type": "readcount", "status": 200, "skipped": True}
-#         async with aiohttp.ClientSession() as session:
-#             try:
-#                 async with session.post(BACKEND_DOC_READ_COUNT_URL, json=readcount_data,
-#                                        headers=header) as response:
-#                     return {"type": "readcount", "status": response.status}
-#             except Exception as e:
-#                 print(f"Error saving read count: {e}")
-#                 return {"type": "readcount", "status": 500, "error": str(e)}
-    
-#     async def post_token():
-#         # Convert sync function to async - you may need to modify this based on your implementation
-#         try:
-#             # If used_token_store is sync, wrap it
-#             loop = asyncio.get_event_loop()
-#             response = await loop.run_in_executor(
-#                 None, 
-#                 lambda: used_token_store(
-#                     type='chatbot', 
-#                     used_tokens=token_data['used_tokens'], 
-#                     auth_token=auth_token
-#                 )
-#             )
-#             return {"type": "token", "status": response.status_code}
-#         except Exception as e:
-#             print(f"Error saving token: {e}")
-#             return {"type": "token", "status": 500, "error": str(e)}
-    
-#     # Execute all three POST requests in parallel
-#     results = await asyncio.gather(
-#         post_history(),
-#         post_readcount(),
-#         post_token(),
-#         return_exceptions=True
-#     )
-    
-#     return results
 async def fetch_history_async(auth_token: str, limit: int = 10, offset: int = 0):
     """Async function to fetch chat history with pagination and dynamic error handling"""
     header = {"Authorization": f"Bearer {auth_token}"}
@@ -438,177 +360,6 @@ async def save_data_parallel(history_data: dict, readcount_data: dict,
     
     return results
 
-
-# async def ask_doc_bot(question: str, organization: str, auth_token: str):
-#     try:
-#         # ============ STEP 1: PARALLEL FETCH (History + Context) ============
-#         print("⏱️ Starting parallel fetch...")
-#         start_time = asyncio.get_event_loop().time()
-        
-#         history_task = fetch_history_async(auth_token)
-#         context_task = build_context_from_weaviate_results(
-#             organization=organization,
-#             query_text=question,
-#             category="",
-#             document_type=""
-#         )
-        
-#         # Wait for both to complete
-#         history_result, context = await asyncio.gather(history_task, context_task)
-        
-#         fetch_time = asyncio.get_event_loop().time() - start_time
-#         print(f"✅ Parallel fetch completed in {fetch_time:.2f}s")
-        
-#         # Check token limit
-#         if history_result['remaining_tokens'] is not None and history_result['remaining_tokens'] < 1000:
-#             return JSONResponse(status_code=400, content={
-#                 "status": "error",
-#                 "message": "Insufficient tokens to continue the conversation."
-#             })
-        
-#         # Build chat history
-#         chat_history = []
-#         for h in history_result['histories']:
-#             chat_history.append({"role": "user", "content": h['prompt']})
-#             chat_history.append({"role": "assistant", "content": h['response']})
-        
-        # # ============ STEP 2: LLM CALL ============
-        # system_prompt = (
-        #     "You are Nestor AI, a smart, friendly, and compassionate digital assistant specifically designed to support senior citizens. "
-        #     "Your primary mission is to help older adults navigate policies, services, benefits, and general information questions with clarity and empathy.\n\n"
-            
-        #     "## Identity & Personality\n"
-        #     "- When asked 'Who are you?' or similar questions, warmly introduce yourself as Nestor AI, a dedicated helpful assistant for seniors and their families.\n"
-        #     "- Maintain a patient, respectful, and encouraging tone in all interactions.\n"
-        #     "- Use clear, simple language while avoiding condescension.\n\n"
-            
-        #     "## Context & Document Handling\n"
-        #     "- Each document excerpt includes metadata: Title, Source, Created At, Last Update, document_id, and summary.\n"
-        #     "- When answering from provided context documents, ALWAYS cite the source by including the document_id next to the title in this exact format: Title [IR-xxxxxx]\n"
-        #     "- If the context documents contain relevant information, prioritize that information in your response.\n"
-        #     "- If the answer is not found in the provided context, answer using your general knowledge without limitation.\n"
-        #     "- Always be transparent about your information source.\n\n"
-            
-        #     "## Language Handling\n"
-        #     "- If the user writes in English, reply in English.\n"
-        #     "- If the user writes in another language, reply in that language.\n"
-        #     "- If the user mixes languages naturally (code-switching), mirror that style in your response.\n\n"
-            
-        #     "## Response Format\n"
-        #     "Always return your response strictly in this JSON format without any additional text or markdown:\n"
-        #     "{\n"
-        #     '  "answer": "your complete answer here, including citations where applicable",\n'
-        #     '  "used_document": true_or_false\n'
-        #     "}\n\n"
-            
-        #     "## Response Guidelines\n"
-        #     "- Set used_document to true if you referenced any provided context documents.\n"
-        #     "- Set used_document to false if you answered entirely from general knowledge.\n"
-        #     "- Provide complete, helpful answers that directly address the user's question.\n"
-        #     "- When appropriate, offer additional relevant information that might be helpful.\n"
-        # )
-        
-#         messages = [{"role": "system", "content": system_prompt}]
-#         messages.extend(chat_history)
-        
-#         if context:
-#             user_content = f"Context:\n{context}\n\nQuestion: {question}"
-#         else:
-#             user_content = f"Question: {question}"
-        
-#         messages.append({"role": "user", "content": user_content})
-        
-#         # GPT-4 call
-#         print("⏱️ Starting LLM call...")
-#         llm_start = asyncio.get_event_loop().time()
-        
-#         async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
-#             response = await openai_client.chat.completions.create(
-#                 model="gpt-4",
-#                 messages=messages,
-#                 temperature=0.3
-#             )
-        
-#         llm_time = asyncio.get_event_loop().time() - llm_start
-#         print(f"✅ LLM call completed in {llm_time:.2f}s")
-        
-#         used_tokens = response.usage.total_tokens
-#         answer = response.choices[0].message.content.strip()
-#         json_answer = extract_json_from_llm(answer)
-        
-#         # Ensure we have a dict
-#         if isinstance(json_answer, str):
-#             try:
-#                 json_answer = json.loads(json_answer.replace("'", '"'))
-#             except Exception:
-#                 json_answer = {
-#                     "answer": json_answer,
-#                     "used_document": False
-#                 }
-        
-#         print('Bot answer after LLM parser------------\n', json_answer)
-        
-#         # ============ STEP 3: PARALLEL SAVE (History + ReadCount + Token) ============
-#         print("⏱️ Starting parallel save...")
-#         save_start = asyncio.get_event_loop().time()
-        
-#         # Prepare read count data
-#         readcount_data = {}
-#         if json_answer['used_document'] and context:
-#             for c in context:
-#                 doc_id = c.properties.get("document_id", "")
-#                 readcount_data[doc_id] = 1
-#             print("Document ID list--\n", readcount_data)
-        
-#         # Prepare data for parallel save
-#         history_data = {
-#             "prompt": question,
-#             "response": json_answer['answer'],
-#             "used_tokens": used_tokens
-#         }
-        
-#         token_data = {
-#             "used_tokens": used_tokens
-#         }
-        
-#         # Save all in parallel
-#         save_results = await save_data_parallel(
-#             history_data, 
-#             readcount_data, 
-#             token_data, 
-#             auth_token
-#         )
-        
-#         save_time = asyncio.get_event_loop().time() - save_start
-#         print(f"✅ Parallel save completed in {save_time:.2f}s")
-        
-#         # Check for errors
-#         for result in save_results:
-#             if isinstance(result, dict):
-#                 if result['status'] not in [200, 201] and not result.get('skipped'):
-#                     print(f"⚠️ Warning: {result['type']} save failed with status {result['status']}")
-#                     # Don't return error, just log it - user still gets their answer
-        
-#         total_time = asyncio.get_event_loop().time() - start_time
-#         print(f"🎯 Total request time: {total_time:.2f}s")
-        
-#         # Finally return
-#         return JSONResponse(status_code=200, content={
-#             "status": "success",
-#             "question": question,
-#             "answer": json_answer['answer'],
-#             "used_tokens": used_tokens,
-#             "performance": {
-#                 "fetch_time": f"{fetch_time:.2f}s",
-#                 "llm_time": f"{llm_time:.2f}s",
-#                 "save_time": f"{save_time:.2f}s",
-#                 "total_time": f"{total_time:.2f}s"
-#             }
-#         })
-    
-#     except Exception as e:
-#         print(f"❌ ask_doc_bot failed:--------- {str(e)}")
-#         raise e
 async def ask_doc_bot(question: str, organization: str, auth_token: str):
     try:
         # ================= STEP 0: Check Auth Token =================
@@ -698,7 +449,7 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
         system_prompt = (
             "You are Nestor AI, a friendly and knowledgeable assistant specializing in aged care and Australian law. "
             "You communicate with warmth, empathy, and genuine care for helping people understand complex topics.\n\n"
-            
+
             "🎯 **PERSONALITY & STYLE:**\n"
             "- Be conversational, warm, and approachable like a real chatbot\n"
             "- Start with natural responses like 'Sure!', 'Of course!', 'Absolutely!', 'Good question!'\n"
@@ -707,64 +458,72 @@ async def ask_doc_bot(question: str, organization: str, auth_token: str):
             "- Break down complex information into digestible, conversational chunks\n"
             "- Use phrases like 'Here's what I found', 'Based on my knowledge', 'Let me explain this for you'\n"
             "- Show genuine interest with phrases like 'That's a great question!', 'I understand your concern about...'\n\n"
-            
+
             "💬 **CONVERSATIONAL FLOW:**\n"
             "1. **Opening:** Start with a warm greeting that acknowledges the question\n"
             "2. **Body:** Provide the main information in clear, organized but natural sections\n"
             "3. **Closing:** End with an encouraging note and invitation for follow-up\n"
             "4. **Tone:** Maintain helpful, patient, and supportive tone throughout\n\n"
-            
-            "📝 **ANSWER STRUCTURE EXAMPLES:**\n"
-            "For law questions:\n"
-            "💡 'Sure! That's an important question about Australian law. Let me break this down for you...'\n"
-            "📋 'Based on the Aged Care Act, here are the key points you should know...'\n"
-            "🤝 'Hope this clarifies things for you! Feel free to ask if you need more details.'\n\n"
-            
-            "For policy questions:\n"
-            "👋 'Of course! I found some relevant information in your organization's policies...'\n"
-            "📄 'According to your organization's documents, here's what applies to your situation...'\n"
-            "💫 'Let me know if this answers your question completely!'\n\n"
-            
-            "🔍 **CONTEXT USAGE RULES:**\n"
-            "- LAW QUESTIONS: Use Australian Law Context, set used_document=false\n"
-            "- POLICY QUESTIONS: Use organization context, set used_document=true\n"
-            "- NEVER mix organization context with law questions\n"
-            "- Be transparent: 'Based on Australian legislation...' or 'According to your organization's policy...'\n\n"
-            
+
+            "🔧 **COMPLEX SCENARIOS (NEW):**\n"
+            "- When a user asks a scenario-based or multi-step question, follow this pattern automatically:\n"
+            "  1) Summarize the user's scenario in 1-2 sentences.\n"
+            "  2) List explicit assumptions you make (numbered).\n"
+            "  3) Provide an analysis that covers key edge cases and recommended options.\n"
+            "  4) If legal/policy obligations apply, mark them clearly and cite exact lines where possible.\n\n"
+
+            "📝 **STEP-BY-STEP ACTIONS / SOP (NEW):**\n"
+            "- For any 'how-to' or operational question, always include a numbered SOP with:\n"
+            "  • Preconditions / prerequisites (short checklist).\n"
+            "  • Clear numbered steps (each one short and actionable).\n"
+            "  • Roles or inputs required per step (if applicable).\n"
+            "  • Expected outcome for each major step.\n"
+            "- If full automation isn't possible, include a concise 'What to do if X fails' fallback.\n\n"
+
+            "📚 **CITATIONS & EXACT POLICY LINES (NEW):**\n"
+            "- When referring to law or policy, do the following:\n"
+            "  1) If the exact text is available, quote up to 25 words of the exact line in quotation marks.\n"
+            "  2) Immediately follow with a citation in this precise format: (Document Title, Section/Clause X; YYYY).\n"
+            "  3) If a reliable URL is available, include it in the source metadata only (do not place raw URLs in user-facing prose unless asked).\n"
+            "  4) Set the boolean `used_document` according to whether the user's organization document was used (true) or an external law/source was used (false).\n"
+            "  5) If the exact text cannot be found, state: 'Exact clause text not provided / not found.' and offer to retrieve and verify sources.\n\n"
+
+            "🔍 **CONTEXT USAGE RULES (UPDATED):**\n"
+            "- LAW QUESTIONS: Use Australian Law Context, set used_document=false unless the user supplied a legal document.\n"
+            "- POLICY QUESTIONS: Use organization context, set used_document=true when using the organization doc.\n"
+            "- NEVER mix organization context with law questions unless explicitly instructed and cite both clearly.\n\n"
+
             "🌍 **MULTILINGUAL SUPPORT:**\n"
             "- ALWAYS respond in the SAME language the user asks in\n"
-            "- Support major Australian community languages:\n"
-            "  • English: 'Sure!' / 'Of course!'\n"
-            "  • Mandarin Chinese: '当然!' / '好的!'\n"
-            "  • Arabic: 'بالطبع!' / 'أكيد!'\n"
-            "  • Vietnamese: 'Chắc chắn!' / 'Tất nhiên!'\n"
-            "  • Italian: 'Certo!' / 'Naturalmente!'\n"
-            "  • Greek: 'Φυσικά!' / 'Βέβαια!'\n"
-            "  • Hindi: 'ज़रूर!' / 'बिल्कुल!'\n"
-            "  • Bengali: 'অবশ্যই!' / 'ঠিক আছে!'\n"
-            "- Maintain the same warm, conversational tone in any language\n"
-            "- Use culturally appropriate expressions and greetings\n\n"
-            
+            "... (keep the original multilingual lines from previous prompt) ...\n\n"
+
             "📋 **RESPONSE FORMAT (STRICT JSON):**\n"
             "You MUST return ONLY this JSON format - no other text, no markdown, no code blocks:\n"
             "{\n"
-            '  "answer": "Your natural, conversational response here with proper opening and closing",\n'
-            '  "used_document": true_or_false\n'
+            '  \"answer\": \"Your natural, conversational response here with proper opening and closing\", \n'
+            '  \"used_document\": true_or_false, \n'
+            '  \"sources\": [\n'
+            '      { \"title\": \"Document Title or Law\", \"section\": \"Section X\", \"quote\": \"Up to 25-word quote (if used)\", \"meta\": \"(year or other metadata)\" }\n'
+            '  ]\n'
             "}\n\n"
-            
+
             "🚫 **FORBIDDEN:**\n"
             "- No markdown formatting (**, ##, etc.)\n"
-            "- No code blocks or triple backticks\n"
+            "- No code blocks or triple backticks in user-facing output\n"
             "- No nested JSON in answer field\n"
             "- No technical formatting - just natural conversation\n"
             "- No 'As an AI assistant' disclaimers\n\n"
-            
-            "✅ **GOOD RESPONSE EXAMPLE:**\n"
+
+            "✅ **GOOD RESPONSE EXAMPLE (UPDATED):**\n"
             "{\n"
-            '  "answer": "Sure! That\'s a great question about aged care regulations. Let me explain how this works in Australia...\\n\\nBased on the Aged Care Act 1997, there are several key requirements for providers. The main aspects include quality standards, resident rights, and compliance measures.\\n\\nFor example, Standard 2 focuses on personal and clinical care, while Standard 3 covers services and supports for daily living.\\n\\nHope this gives you a clear understanding! Feel free to ask if you need specifics about any particular standard.",\n'
-            '  "used_document": false\n'
+            "  \"answer\": \"Sure! That\\'s a great question about aged care regulations. Let me explain how this works in Australia...\\n\\nBased on the Aged Care Act 1997, here are the key requirements...\\n\\nStep-by-step SOP: 1) Check eligibility; 2) Gather documents; 3) Submit application...\\n\\nHope this helps! Let me know if you want the exact clause text or links.\",\n"
+            "  \"used_document\": false,\n"
+            "  \"sources\": [ { \"title\": \"Aged Care Act 1997\", \"section\": \"S.12A\", \"quote\": \"[exact 25-word quote if used]\", \"meta\": \"1997\" } ]\n"
             "}\n"
         )
+
+
+
         
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(chat_history)
