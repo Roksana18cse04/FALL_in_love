@@ -58,22 +58,25 @@ async def get_next_version(client, collection_name, title):
     print("next version -------------", next_version)
     return f"v{next_version}"
 
-
-async def delete_existing_document_by_id_and_version(client, collection_name, doc_db_id, version_id):
-    """Delete existing document chunks with the same document_id and version_id"""
+async def is_exist_document(client, collection_name, doc_db_id, version_id):
+    """Check if a document with the same doc_db_id and version_id exists"""
+    if not client.is_connected():
+        client.connect()
     collection = client.collections.get(collection_name)
     
-    # Find existing documents with same document_id and version_id
+    # Query for existing documents with the same doc_db_id and version_id
     results = collection.query.fetch_objects(
-        filters=Filter.by_property("document_id").equal(str(doc_db_id)) & 
-                Filter.by_property("version_id").equal(str(version_id))
+        filters=(
+            Filter.by_property("document_id").equal(str(doc_db_id))
+            .and_filter(
+                Filter.by_property("version_id").equal(version_id)
+            )
+        )
     )
+    if results.objects:
+        return True
+    return False
     
-    # Delete existing chunks
-    for obj in results.objects:
-        collection.data.delete_by_id(obj.uuid)
-    
-    return len(results.objects)
 
 from app.services.schema_manager import create_schema
 async def weaviate_insertion(organization, doc_db_id, document_type, content, category, title, version_id, version_number):
@@ -81,26 +84,33 @@ async def weaviate_insertion(organization, doc_db_id, document_type, content, ca
     try:
         # Ensure schema exists
         await create_schema(organization)
+        
 
+        # check existing document with same doc_db_id and version_id
+        exist = await is_exist_document(client, organization, doc_db_id, version_id)
+        if exist:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": f"Document '{title}' with version_id '{version_id}' already exists. Skipping insertion."
+                }
+            )
+        
+        # Else Insert new document
+        
         data = await extract_plain_text(content)
         chunks = chunk_text(data)
         print(f"Document split into {len(chunks)} chunks.")
         
-        # Check and delete existing document with same document_id and version_id
-        if not client.is_connected():
-            client.connect()
-        deleted_count = await delete_existing_document_by_id_and_version(client, organization, doc_db_id, version_id)
-        if deleted_count > 0:
-            print(f"Updated existing document ID '{doc_db_id}' version '{version_id}' to title '{title}' (deleted {deleted_count} old chunks)")
-            action = "updated"
-        else:
-            print(f"Inserting new document '{title}' with ID '{doc_db_id}' version '{version_id}'")
-            action = "inserted"
 
         # Insert new chunks
         for idx, chunk in enumerate(chunks):
             try:
+                if not client.is_connected():
+                    client.connect()
                 collection = client.collections.get(organization)
+
                 collection.data.insert(
                     properties={
                         "document_id": str(doc_db_id),
@@ -121,7 +131,7 @@ async def weaviate_insertion(organization, doc_db_id, document_type, content, ca
             status_code=201,
             content={
                 "status": "success",
-                "message": f"Document '{title}' {action} successfully with version {version_number}."
+                "message": f"Document '{title}' successfully with version {version_number}."
             }
         )
     

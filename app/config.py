@@ -19,4 +19,11 @@ BACKEND_TOKEN_COUNT_URL = f"{BASE_URL}/ai/TokenCount/"
 BACKEND_DOC_READ_COUNT_URL = f"{BASE_URL}/documents/Count/"
 
 GLOBAL_ORG = "GlobalLaw"
+
+RAG_CONFIG = {
+    "initial_fetch": int(os.getenv("RAG_INITIAL_LIMIT", "20")),
+    "rerank_top_k": int(os.getenv("RERANK_TOP_K", "3")),
+    "min_tokens_required": int(os.getenv("MIN_TOKENS_REQUIRED", "100")),
+    "cache_ttl": int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+}
  
