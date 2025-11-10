@@ -58,21 +58,26 @@ async def get_next_version(client, collection_name, title):
     print("next version -------------", next_version)
     return f"v{next_version}"
 
+
+from weaviate.classes.query import Filter
+
+
 async def is_exist_document(client, collection_name, doc_db_id, version_id):
     """Check if a document with the same doc_db_id and version_id exists"""
     if not client.is_connected():
         client.connect()
+    
     collection = client.collections.get(collection_name)
     
     # Query for existing documents with the same doc_db_id and version_id
+    # Use & operator instead of .and_filter()
     results = collection.query.fetch_objects(
         filters=(
-            Filter.by_property("document_id").equal(str(doc_db_id))
-            .and_filter(
-                Filter.by_property("version_id").equal(version_id)
-            )
+            Filter.by_property("document_id").equal(str(doc_db_id)) &
+            Filter.by_property("version_id").equal(version_id)
         )
     )
+    
     if results.objects:
         return True
     return False
@@ -83,8 +88,8 @@ async def weaviate_insertion(organization, doc_db_id, document_type, content, ca
     client = get_weaviate_client()
     try:
         # Ensure schema exists
-        await create_schema(organization)
-        
+        response = await create_schema(organization)
+        print("Schema creation response:", response)
 
         # check existing document with same doc_db_id and version_id
         exist = await is_exist_document(client, organization, doc_db_id, version_id)

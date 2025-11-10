@@ -32,6 +32,7 @@ async def insert_document_endpoint(request: Document):
         return response
     except UnexpectedStatusCodeError as e:
         error_msg = str(e)
+        print("error_msg:", error_msg  )
         if "429" in error_msg or "quota" in error_msg.lower():
             # OpenAI quota exceeded
             raise HTTPException(status_code=500,

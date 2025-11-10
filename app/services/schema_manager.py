@@ -13,8 +13,11 @@ async def create_schema(organization: str):
             client.connect()
 
         # Check if collection already exists
-        collections = client.collections.list_all()
-        if organization not in collections:
+        if client.collections.exists(organization):
+            print(f"{organization} schema already exists.")
+            return {"status": "exists", "message": f"Collection '{organization}' already exists."}
+        
+        else:
             client.collections.create(
                 name=organization,
                 # vector_config=Configure.Vectorizer.text2vec_openai(
@@ -86,12 +89,9 @@ async def create_schema(organization: str):
             )
             print(f"Created {organization} schema with vectorizer.")
             return {"status": "created", "message": f"Collection '{organization}' created successfully."}
-        else:
-            print(f"{organization} schema already exists.")
-            return {"status": "exists", "message": f"Collection '{organization}' already exists."}
 
     except Exception as e:
-        print(f"Error creating {organization} schema: {e}")
+        print(f"Error creating {organization} schema----------: {e}")
         raise e
         
     finally:
