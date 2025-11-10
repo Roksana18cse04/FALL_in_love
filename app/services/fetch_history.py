@@ -33,9 +33,7 @@ async def fetch_history_async(auth_token: str, limit: int = 10, offset: int = 0)
             if status == 200:
                 data = await response.json()
                 histories = data.get('data', {}).get('histories', [])
-                last_10_histories = histories[-10:] 
-                last_10_histories = sorted(last_10_histories, key=lambda x: x['created_at'])
-                print("Fetched history data:------------------------\n", last_10_histories)  # Debug log
+                last_10_histories = sorted(histories, key=lambda x: x['created_at'])
                 return {
                     "success": True,
                     "remaining_tokens": data.get('data', {}).get('remaining_tokens', None),
