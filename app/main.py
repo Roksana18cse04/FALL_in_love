@@ -5,7 +5,7 @@ from app.routes.policy_insert import router as policy_insert_router
 from app.routes.create_organization import router as create_organization_router
 from app.routes.policy_generate import router as policy_generate_router
 from app.routes.policy_embedding import router as policy_embedding_router
-# from app.routes.policy_alignment import router as policy_alignment_router
+from app.routes.policy_alignment import router as policy_alignment_router
 from app.routes.delete_document import router as delete_document_router
 from app.routes.delete_schema import router as delete_schema_router
 from app.routes.summerizer import router as summarizer_router
@@ -33,7 +33,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://falleninlove-client.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,7 +51,7 @@ app.include_router(delete_schema_router, prefix="/organization", tags=["Organiza
 
 app.include_router(policy_generate_router, prefix="/policy", tags=["Policy Generate"])
 app.include_router(policy_embedding_router, prefix="/policy", tags=["Law Upload-Delete"])
-# app.include_router(policy_alignment_router, prefix="/policy", tags=["Policy Alignment"])
+app.include_router(policy_alignment_router, prefix="/policy", tags=["Policy Alignment"])
 
 
 @app.get("/")

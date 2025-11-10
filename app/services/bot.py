@@ -187,7 +187,9 @@ async def ask_doc_bot(
         # ================= LLM CALL WITH FORCED JSON =================
         logger.info("🤖 Calling LLM...")
         llm_start = asyncio.get_event_loop().time()
-        
+
+
+        print("messages to LLM:-----------------\n", messages)  # Debug log
         try:
             async with AsyncOpenAI(api_key=OPENAI_API_KEY) as openai_client:
                 response = await openai_client.chat.completions.create(

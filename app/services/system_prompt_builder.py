@@ -1,5 +1,5 @@
 def build_system_prompt(question_type: str) -> str:
-    """Build modular system prompt based on question type"""
+    """Build modular system prompt based on question type - Always human-like, never generic"""
     
     base_prompt = """You are Nestor AI, a friendly and warm assistant specializing in aged care and Australian law.
 
